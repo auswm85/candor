@@ -75,7 +75,7 @@ See `docs/plan.md` for the full implementation plan.
 | Provider                  | Endpoint                                                                            | Status                                                                      |
 | ------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | OpenAI                    | `GET /v1/organization/costs`                                                        | v1 — includes cache-read/write breakdown                                    |
-| Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/cost_report` | v1 — requires Admin API key (`sk-ant-admin01-...`), includes cache tracking |
+| Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/usage_report/claude_code` | v1 — requires Admin API key, covers API + Claude Code costs, includes cache tracking |
 | OpenRouter                | `GET /api/v1/usage`                                                                 | v1 — includes per-model cost breakdown                                      |
 | Ollama / vLLM / LM Studio | N/A (no billing API)                                                                | v1.1 deferred — proxy mode TBD                                              |
 

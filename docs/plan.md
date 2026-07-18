@@ -49,7 +49,7 @@ token-tracker/
 │   ├── poll/                      # scheduler
 │   ├── provider/
 │   │   ├── openai/                # /v1/organization/costs
-│   │   ├── anthropic/             # /v1/organizations/usage_report/messages + /cost_report
+│   │   ├── anthropic/             # /v1/organizations/usage_report/messages + /claude_code
 │   │   └── openrouter/            # /api/v1/usage
 │   ├── cost/                      # cost rules engine (YAML-driven)
 │   ├── store/                     # SQLite via sqlc + migrations
@@ -153,13 +153,14 @@ providers:
 - Pagination: cursor-based via `after` param.
 - Rate limit: 60 req/min on org endpoints.
 
-**Anthropic (requires Admin API key):**
+**Anthropic (requires Admin API key, covers API + Claude Code):**
 
-- Usage endpoint: `GET /v1/organizations/usage_report/messages?starting_at=...&ending_at=...&group_by[]=model&bucket_width=1d`
-- Cost endpoint: `GET /v1/organizations/cost_report?starting_at=...&ending_at=...&group_by[]=model`
+- API Usage: `GET /v1/organizations/usage_report/messages?starting_at=...&ending_at=...&group_by[]=model&bucket_width=1d`
+- Claude Code: `GET /v1/organizations/usage_report/claude_code?starting_at=YYYY-MM-DD` (per-day, aggregates across users, prefixed `claude-code/<model>`)
+- Cost: `GET /v1/organizations/cost_report?starting_at=...&ending_at=...&group_by[]=model`
 - Auth: `x-api-key: $ANTHROPIC_ADMIN_KEY` (Admin API key — `sk-ant-admin01-...`)
-- Returns token counts with `cached_input`, `cache_creation`, `output` breakdowns — cache tracking is built in
-- Cost endpoint returns USD as decimal strings; data freshness ~5 min; supports 1-min polling
+- Both endpoints return token counts with cache breakdowns (`cached_input`, `cache_creation`, `output`)
+- Data freshness: ~5 min (API), ~1h (Claude Code); supports 1-min polling
 - Pagination: cursor-based via `next_page` / `has_more`
 
 **OpenRouter:**

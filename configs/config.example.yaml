@@ -41,6 +41,11 @@ prices:
       cached_input_per_1m: 0.30
       cache_write_per_1m: 3.75
       output_per_1m: 15.00
+    claude-code/claude-sonnet-4-5:
+      input_per_1m: 3.00
+      cached_input_per_1m: 0.30
+      cache_write_per_1m: 3.75
+      output_per_1m: 15.00
   openrouter:
     openai/gpt-4o:
       input_per_1m: 2.50

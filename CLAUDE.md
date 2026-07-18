@@ -41,7 +41,7 @@ Polling strategy (Strategy A): only official provider billing/usage APIs. No pro
 internal/
   provider/       Provider interface + per-provider adapters
     openai/       OpenAI /v1/organization/costs adapter
-    anthropic/    Anthropic /v1/organizations/usage_report/messages + /cost_report adapter
+    anthropic/    Anthropic /v1/organizations/usage_report/messages + /claude_code adapter
     openrouter/   OpenRouter /api/v1/usage adapter
   cost/           Cost engine: pricing rules, projection calculation
   store/          SQLite via sqlc + golang-migrate
