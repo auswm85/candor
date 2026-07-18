@@ -1,0 +1,18 @@
+# Build artifacts (anchored to root to avoid matching cmd/ directories)
+/token-tracker
+/tt
+*.exe
+*.test
+*.out
+dist/
+node_modules/
+web/node_modules/
+web/.svelte-kit/
+web/build/
+internal/web/static/
+vendor/
+# Secrets
+.env
+.env.*
+# OS
+.DS_Store
