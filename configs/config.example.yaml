@@ -23,6 +23,9 @@ providers:
     enabled: true
     keyring_key: token-tracker/openrouter-api-key
 
+# NOTE: config-driven pricing is not yet wired up. The cost engine currently
+# uses built-in defaults (internal/cost.DefaultPrices). This section documents
+# the intended override schema; editing it has no effect yet.
 prices:
   openai:
     gpt-4o:

@@ -2,11 +2,17 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
 	"github.com/auswm85/token-tracker/internal/store"
@@ -198,6 +204,152 @@ var migrateCmd = &cobra.Command{
 	},
 }
 
+var daemonCmd = &cobra.Command{
+	Use:   "daemon",
+	Short: "Run the polling daemon in the foreground (headless, no TUI)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+
+		scheduler := app.NewScheduler(cfg, st)
+		if scheduler == nil {
+			return fmt.Errorf("no providers configured; run `tt auth` first")
+		}
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		log.Printf("token-tracker daemon started (interval %s, db %s)",
+			app.ParseInterval(cfg.PollInterval, 5*time.Minute), cfg.Database)
+		scheduler.Start(ctx) // blocks until signalled
+		log.Print("daemon stopped")
+		return nil
+	},
+}
+
+var statusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show daemon health: last poll, database, providers",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+
+		last, _ := st.GetConfigState("last_poll")
+		if last == "" {
+			last = "never"
+		}
+		size := "n/a"
+		if fi, err := os.Stat(cfg.Database); err == nil {
+			size = humanBytes(fi.Size())
+		}
+		now := time.Now()
+		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		month, _ := st.TotalCostSince(monthStart)
+
+		configured := auth.ListConfiguredProviders()
+		if len(configured) == 0 {
+			configured = []string{"(none — run `tt auth`)"}
+		}
+
+		fmt.Printf("Database:     %s (%s)\n", cfg.Database, size)
+		fmt.Printf("Poll every:   %s\n", app.ParseInterval(cfg.PollInterval, 5*time.Minute))
+		fmt.Printf("Last poll:    %s\n", last)
+		fmt.Printf("Providers:    %s\n", strings.Join(configured, ", "))
+		fmt.Printf("Month spend:  $%.2f\n", month)
+		return nil
+	},
+}
+
+var serviceCmd = &cobra.Command{
+	Use:   "service",
+	Short: "Print an OS service unit (launchd/systemd) for the daemon",
+	Long: `Print a service definition that runs 'tt daemon' at login/boot.
+
+Redirect it into the right location, for example:
+  macOS:  tt service > ~/Library/LaunchAgents/dev.token-tracker.plist
+  Linux:  tt service > ~/.config/systemd/user/token-tracker.service`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		exe, err := os.Executable()
+		if err != nil {
+			exe = "tt"
+		}
+		switch runtime.GOOS {
+		case "darwin":
+			fmt.Printf(launchdPlist, exe)
+		case "linux":
+			fmt.Printf(systemdUnit, exe)
+		default:
+			return fmt.Errorf("service generation not supported on %s", runtime.GOOS)
+		}
+		return nil
+	},
+}
+
+const launchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.token-tracker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>daemon</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+`
+
+const systemdUnit = `[Unit]
+Description=token-tracker LLM cost monitor
+After=network-online.target
+
+[Service]
+ExecStart=%s daemon
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`
+
+// humanBytes formats a byte count as a short human-readable string.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
 func init() {
 	authCmd.Flags().Bool("list", false, "List configured providers")
 	spendCmd.Flags().Bool("by-model", false, "Break spend down by model")
@@ -205,6 +357,9 @@ func init() {
 	rootCmd.AddCommand(clearCmd)
 	rootCmd.AddCommand(spendCmd)
 	rootCmd.AddCommand(migrateCmd)
+	rootCmd.AddCommand(daemonCmd)
+	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(serviceCmd)
 }
 
 func main() {

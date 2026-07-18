@@ -338,44 +338,45 @@ tt status                   # daemon health, last poll time, DB size
 - [x] OpenRouter: `GET /api/v1/usage` works with standard API key, includes cache breakdown
 - [x] Decision: ship 3-provider v1 (OpenAI, Anthropic, OpenRouter)
 
-### M1 — Skeleton (4 days)
+### M1 — Skeleton (4 days) — mostly complete
 
-- [ ] `go mod init`, repo scaffolding
-- [ ] SQLite migrations, sqlc-generated store code
-- [ ] Config loader (viper + keyring)
-- [ ] OpenAI provider adapter (polling + pagination)
-- [ ] OpenRouter provider adapter
-- [ ] Anthropic provider adapter (usage_report + cost_report, requires Admin API key)
-- [ ] Cost engine (pure function, fully unit-tested)
-- [ ] `tt spend today` CLI — first end-to-end vertical slice
+- [x] `go mod init`, repo scaffolding
+- [x] SQLite migrations _(hand-written store + embedded migration runner; not sqlc)_
+- [x] Config loader (viper + keyring)
+- [ ] OpenAI provider adapter (polling + pagination) — **stubbed**, needs verified response schema
+- [ ] OpenRouter provider adapter — **stubbed**, needs verified response schema
+- [x] Anthropic provider adapter (usage_report/messages + claude_code, requires Admin API key) _(cost_report not used — cost computed by engine)_
+- [x] Cost engine (pure function, unit-tested; built-in default prices)
+- [x] `tt spend today` CLI — first end-to-end vertical slice
 
-### M2 — Daemon + Alerts (3 days)
+### M2 — Daemon + Alerts (3 days) — mostly complete
 
-- [ ] Poll loop with backoff + retry
-- [ ] Alert checker
-- [ ] `tt daemon` command + launchd/systemd unit generation
-- [ ] Terminal notifications on all 3 platforms
+- [x] Poll loop (persists to store) _(backoff/retry still TODO)_
+- [x] Alert checker (projected spend vs thresholds, once-per-threshold/month dedup)
+- [x] `tt daemon` + `tt status` + `tt service` (launchd/systemd unit generation)
+- [x] Terminal notifications on all 3 platforms (macOS/Linux/Windows)
 
-### M3 — TUI (3 days)
+### M3 — TUI (3 days) — in progress
 
-- [ ] bubbletea live dashboard view
+- [x] bubbletea live dashboard view (today/month spend vs budget)
 - [ ] History view (30-day chart)
 - [ ] Alerts view
-- [ ] Snapshot tests
+- [ ] Snapshot tests _(has unit tests, not golden snapshots)_
 
-### M4 — Web Dashboard (4 days)
+### M4 — Web Dashboard (4 days) — not started
 
 - [ ] Svelte/SvelteKit static build pipeline
 - [ ] JSON API endpoints
 - [ ] 3 pages mirroring TUI
 - [ ] Embedded into Go binary via `embed.FS`
 
-### M5 — Polish & Release (2 days)
+### M5 — Polish & Release (2 days) — partial
 
-- [ ] `tt prices diff` (scrape provider pricing pages)
+- [ ] Config-driven pricing override + `tt prices diff` (scrape provider pricing pages)
 - [ ] goreleaser config (Homebrew tap, dmg, deb)
-- [ ] README with install/quickstart
-- [ ] CLAUDE.md following flowbee conventions
+- [x] README with install/quickstart
+- [x] CLAUDE.md following flowbee conventions
+- [x] golangci-lint config + CI lint enforcement
 - [ ] v0.1.0 tag
 
 **Total estimate: ~17 working days part-time (3-4 weeks).**

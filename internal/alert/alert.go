@@ -4,52 +4,81 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/store"
 )
 
 type Checker struct {
-	cfg *config.Config
+	cfg    *config.Config
+	store  *store.Store
+	notify func(string) error // overridable in tests; defaults to OS notifier
 }
 
-func New(cfg *config.Config) *Checker {
-	return &Checker{cfg: cfg}
+func New(cfg *config.Config, st *store.Store) *Checker {
+	return &Checker{cfg: cfg, store: st, notify: notify}
 }
 
-func (c *Checker) Check(projectedMonth float64, currentCost float64, period string, since time.Time) ([]string, error) {
+// Check compares projected monthly spend against the configured budget
+// thresholds and sends an OS notification the first time each threshold is
+// crossed within a calendar month. It returns the message sent, or "" if no
+// new threshold was crossed. Repeated calls within the same month do not
+// re-notify for a threshold already alerted.
+func (c *Checker) Check(projectedMonth float64) (string, error) {
 	budget := c.cfg.Defaults.MonthlyBudgetUSD
-	if budget <= 0 {
-		return nil, nil
+	if budget <= 0 || len(c.cfg.Defaults.AlertThresholds) == 0 {
+		return "", nil
 	}
+	pct := projectedMonth / budget * 100
 
-	var triggers []string
-	pct := (projectedMonth / budget) * 100
-
-	for _, threshold := range c.cfg.Defaults.AlertThresholds {
-		if int(pct) >= threshold {
-			msg := fmt.Sprintf("tracker: %.0f%% of monthly budget (%.0f%% = $%.0f / $%.0f)",
-				pct, pct, projectedMonth, budget)
-			triggers = append(triggers, msg)
-			_ = notify(msg)
+	// Highest threshold currently crossed.
+	crossed := 0
+	for _, t := range c.cfg.Defaults.AlertThresholds {
+		if int(pct) >= t && t > crossed {
+			crossed = t
 		}
 	}
-	return triggers, nil
+	if crossed == 0 {
+		return "", nil
+	}
+
+	// Dedup: only fire when crossing a higher threshold than already alerted
+	// this month. The month is part of the key, so it resets automatically.
+	monthKey := "alert_notified_" + time.Now().Format("2006-01")
+	prev := 0
+	if c.store != nil {
+		if v, err := c.store.GetConfigState(monthKey); err == nil && v != "" {
+			prev, _ = strconv.Atoi(v)
+		}
+	}
+	if crossed <= prev {
+		return "", nil
+	}
+
+	msg := fmt.Sprintf("%d%% of monthly budget — projected $%.0f / $%.0f",
+		crossed, projectedMonth, budget)
+	_ = c.notify(msg)
+	if c.store != nil {
+		if err := c.store.SetConfigState(monthKey, strconv.Itoa(crossed)); err != nil {
+			return msg, err
+		}
+	}
+	return msg, nil
 }
 
 func notify(msg string) error {
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("osascript", "-e",
-			fmt.Sprintf(`display notification "%s" with title "token-tracker"`, msg)).Run()
+			fmt.Sprintf(`display notification %q with title "token-tracker"`, msg)).Run()
 	case "linux":
 		return exec.Command("notify-send", "token-tracker", msg).Run()
+	case "windows":
+		script := fmt.Sprintf(
+			`New-BurntToastNotification -Text 'token-tracker', %q`, msg)
+		return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
 	}
 	return nil
-}
-
-func (c *Checker) Run() {
-	for {
-		time.Sleep(5 * time.Minute)
-	}
 }

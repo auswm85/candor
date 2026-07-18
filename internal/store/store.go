@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -195,6 +196,29 @@ func (s *Store) TotalCostSince(since time.Time) (float64, error) {
 		return 0, err
 	}
 	return total.Float64, nil
+}
+
+// GetConfigState returns the stored value for a key, or "" if unset.
+func (s *Store) GetConfigState(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM config_state WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// SetConfigState upserts a key/value pair in config_state.
+func (s *Store) SetConfigState(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO config_state (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	return err
 }
 
 // ModelCost is a per-model cost aggregate, ordered by spend descending.

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/auswm85/token-tracker/internal/alert"
 	"github.com/auswm85/token-tracker/internal/cost"
 	"github.com/auswm85/token-tracker/internal/provider"
 	"github.com/auswm85/token-tracker/internal/store"
@@ -18,14 +19,16 @@ type Scheduler struct {
 	providers []provider.Provider
 	store     *store.Store
 	engine    *cost.Engine
+	alerter   *alert.Checker
 	interval  time.Duration
 }
 
-func New(providers []provider.Provider, s *store.Store, engine *cost.Engine, interval time.Duration) *Scheduler {
+func New(providers []provider.Provider, s *store.Store, engine *cost.Engine, alerter *alert.Checker, interval time.Duration) *Scheduler {
 	return &Scheduler{
 		providers: providers,
 		store:     s,
 		engine:    engine,
+		alerter:   alerter,
 		interval:  interval,
 	}
 }
@@ -61,6 +64,35 @@ func (s *Scheduler) pollAll(ctx context.Context) {
 			continue
 		}
 		log.Printf("poll %s: %d records stored", p.Name(), stored)
+	}
+
+	if err := s.store.SetConfigState("last_poll", time.Now().Format(time.RFC3339)); err != nil {
+		log.Printf("record last_poll: %v", err)
+	}
+	s.checkAlerts()
+}
+
+// checkAlerts projects month-to-date spend forward and lets the alert checker
+// decide whether a threshold notification should fire.
+func (s *Scheduler) checkAlerts() {
+	if s.alerter == nil {
+		return
+	}
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	spend, err := s.store.TotalCostSince(monthStart)
+	if err != nil {
+		log.Printf("alert: month spend: %v", err)
+		return
+	}
+	projected := s.engine.ProjectMonthly("", monthStart, spend)
+	msg, err := s.alerter.Check(projected)
+	if err != nil {
+		log.Printf("alert: %v", err)
+		return
+	}
+	if msg != "" {
+		log.Printf("alert fired: %s", msg)
 	}
 }
 

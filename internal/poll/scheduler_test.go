@@ -56,7 +56,8 @@ func TestScheduler_PersistCostsAndStores(t *testing.T) {
 	}
 
 	engine := cost.New(cost.DefaultPrices())
-	s := New([]provider.Provider{fp}, st, engine, time.Minute)
+	// nil alerter: alert checking is exercised separately in the alert package.
+	s := New([]provider.Provider{fp}, st, engine, nil, time.Minute)
 	s.pollAll(context.Background())
 
 	total, err := st.TotalCostSince(base.Add(-time.Hour))
