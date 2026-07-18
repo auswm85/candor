@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/auswm85/token-tracker/internal/alert"
@@ -27,6 +28,14 @@ func main() {
 	defer func() { _ = st.Close() }()
 	if err := st.Migrate(); err != nil {
 		log.Fatalf("migrate: %v", err)
+	}
+
+	// The bubbletea TUI owns the terminal, so redirect log output to a file
+	// next to the database instead of letting it corrupt the screen.
+	logPath := filepath.Join(filepath.Dir(cfg.Database), "daemon.log")
+	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		defer func() { _ = lf.Close() }()
+		log.SetOutput(lf)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
