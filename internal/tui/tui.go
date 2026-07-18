@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,14 @@ const (
 	stepDone
 )
 
+type tab int
+
+const (
+	tabLive tab = iota
+	tabHistory
+	tabAlerts
+)
+
 type model struct {
 	cfg     *config.Config
 	alerter *alert.Checker
@@ -40,9 +49,13 @@ type model struct {
 	step    step
 
 	// dashboard state
-	today    float64
-	month    float64
-	spendErr string
+	tab       tab
+	today     float64
+	month     float64
+	projected float64
+	daily     []store.DayCost
+	notified  int // highest budget threshold already alerted this month
+	spendErr  string
 
 	// onboarding state
 	pickIndex  int
@@ -77,14 +90,18 @@ func NewProgram(m model, alerter *alert.Checker) *tea.Program {
 }
 
 type spendMsg struct {
-	today float64
-	month float64
-	err   error
+	today     float64
+	month     float64
+	projected float64
+	daily     []store.DayCost
+	notified  int
+	err       error
 }
 
 type tickMsg struct{}
 
-// loadSpend reads today's and this month's totals from the store.
+// loadSpend reads today/month totals, the 30-day daily history, and the current
+// month projection from the store.
 func (m model) loadSpend() tea.Msg {
 	if m.store == nil {
 		return spendMsg{}
@@ -101,7 +118,24 @@ func (m model) loadSpend() tea.Msg {
 	if err != nil {
 		return spendMsg{err: err}
 	}
-	return spendMsg{today: today, month: month}
+	daily, err := m.store.DailyCostSince(now.AddDate(0, 0, -30))
+	if err != nil {
+		return spendMsg{err: err}
+	}
+
+	// Project the month forward at the current burn rate.
+	daysElapsed := now.Sub(startOfMonth).Hours() / 24
+	if daysElapsed < 1 {
+		daysElapsed = 1
+	}
+	projected := month / daysElapsed * 30
+
+	notified := 0
+	if v, err := m.store.GetConfigState("alert_notified_" + now.Format("2006-01")); err == nil && v != "" {
+		notified, _ = strconv.Atoi(v)
+	}
+
+	return spendMsg{today: today, month: month, projected: projected, daily: daily, notified: notified}
 }
 
 func tick() tea.Cmd {
@@ -258,6 +292,16 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			return m, m.loadSpend
+		case "1":
+			m.tab = tabLive
+		case "2":
+			m.tab = tabHistory
+		case "3":
+			m.tab = tabAlerts
+		case "tab", "right", "l":
+			m.tab = (m.tab + 1) % 3
+		case "shift+tab", "left", "h":
+			m.tab = (m.tab + 2) % 3
 		}
 	case spendMsg:
 		if msg.err != nil {
@@ -266,6 +310,9 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spendErr = ""
 			m.today = msg.today
 			m.month = msg.month
+			m.projected = msg.projected
+			m.daily = msg.daily
+			m.notified = msg.notified
 		}
 	case tickMsg:
 		return m, tea.Batch(m.loadSpend, tick())
@@ -363,11 +410,41 @@ func (m model) viewDone() string {
 }
 
 func (m model) viewDashboard() string {
-	configured := auth.ListConfiguredProviders()
-
 	var b strings.Builder
-	b.WriteString("token-tracker — monitoring\n\n")
+	b.WriteString(m.tabBar())
+	b.WriteString("\n\n")
 
+	switch m.tab {
+	case tabHistory:
+		b.WriteString(m.renderHistory())
+	case tabAlerts:
+		b.WriteString(m.renderAlerts())
+	default:
+		b.WriteString(m.renderLive())
+	}
+
+	if m.spendErr != "" {
+		fmt.Fprintf(&b, "\n⚠ %s\n", m.spendErr)
+	}
+	b.WriteString("\n[1] Live  [2] History  [3] Alerts   r refresh  q quit\n")
+	return b.String()
+}
+
+func (m model) tabBar() string {
+	names := []string{"Live", "History", "Alerts"}
+	parts := make([]string, len(names))
+	for i, n := range names {
+		if tab(i) == m.tab {
+			parts[i] = "[" + n + "]"
+		} else {
+			parts[i] = " " + n + " "
+		}
+	}
+	return "token-tracker — " + strings.Join(parts, " ")
+}
+
+func (m model) renderLive() string {
+	var b strings.Builder
 	budget := m.cfg.Defaults.MonthlyBudgetUSD
 	if budget > 0 {
 		pct := m.month / budget * 100
@@ -375,21 +452,78 @@ func (m model) viewDashboard() string {
 		if pct >= 90 {
 			flag = " ⚠"
 		}
-		fmt.Fprintf(&b, "Today:  $%.2f\n", m.today)
-		fmt.Fprintf(&b, "Month:  $%.2f / $%.0f budget  %s%s\n",
+		fmt.Fprintf(&b, "Today:      $%.2f\n", m.today)
+		fmt.Fprintf(&b, "Month:      $%.2f / $%.0f budget  %s%s\n",
 			m.month, budget, progressBar(pct), flag)
+		fmt.Fprintf(&b, "Projected:  $%.2f (end of month)\n", m.projected)
 	} else {
-		fmt.Fprintf(&b, "Today:  $%.2f\n", m.today)
-		fmt.Fprintf(&b, "Month:  $%.2f\n", m.month)
+		fmt.Fprintf(&b, "Today:      $%.2f\n", m.today)
+		fmt.Fprintf(&b, "Month:      $%.2f\n", m.month)
+		fmt.Fprintf(&b, "Projected:  $%.2f (end of month)\n", m.projected)
 	}
 
-	if m.spendErr != "" {
-		fmt.Fprintf(&b, "\n⚠ %s\n", m.spendErr)
+	fmt.Fprintf(&b, "\nConfigured providers: %s\n",
+		strings.Join(auth.ListConfiguredProviders(), ", "))
+	return b.String()
+}
+
+func (m model) renderHistory() string {
+	if len(m.daily) == 0 {
+		return "No usage recorded in the last 30 days."
+	}
+	maxCost := 0.0
+	for _, d := range m.daily {
+		if d.CostUSD > maxCost {
+			maxCost = d.CostUSD
+		}
 	}
 
-	fmt.Fprintf(&b, "\nConfigured providers: %s\n", strings.Join(configured, ", "))
-	b.WriteString("Web dashboard: http://127.0.0.1:7878\n\n")
-	b.WriteString("Press r to refresh, q to quit.\n")
+	var b strings.Builder
+	b.WriteString("Daily cost — last 30 days\n\n")
+	const width = 30
+	for _, d := range m.daily {
+		bars := 0
+		if maxCost > 0 {
+			bars = int(d.CostUSD / maxCost * width)
+		}
+		// Show the MM-DD suffix of the YYYY-MM-DD day string.
+		label := d.Day
+		if len(label) >= 5 {
+			label = label[len(label)-5:]
+		}
+		fmt.Fprintf(&b, "%s  %s %7.2f\n", label, strings.Repeat("▓", bars), d.CostUSD)
+	}
+	return b.String()
+}
+
+func (m model) renderAlerts() string {
+	var b strings.Builder
+	budget := m.cfg.Defaults.MonthlyBudgetUSD
+	if budget <= 0 {
+		return "No monthly budget configured (defaults.monthly_budget_usd).\nSet one in config.yaml to enable alerts."
+	}
+
+	pct := m.projected / budget * 100
+	fmt.Fprintf(&b, "Monthly budget:  $%.0f\n", budget)
+	fmt.Fprintf(&b, "Projected spend: $%.2f (%.0f%% of budget)\n\n", m.projected, pct)
+	b.WriteString("Thresholds:\n")
+
+	thresholds := m.cfg.Defaults.AlertThresholds
+	if len(thresholds) == 0 {
+		b.WriteString("  (none configured)\n")
+		return b.String()
+	}
+	for _, t := range thresholds {
+		mark, note := "○", "not yet"
+		if int(pct) >= t {
+			mark = "✓"
+			note = "crossed"
+		}
+		if t <= m.notified {
+			note += ", notified"
+		}
+		fmt.Fprintf(&b, "  %s  %3d%%   %s\n", mark, t, note)
+	}
 	return b.String()
 }
 

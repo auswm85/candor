@@ -126,6 +126,50 @@ func TestStore_UpsertAndByModel(t *testing.T) {
 	}
 }
 
+func TestStore_DailyCostSince(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	pid, _ := s.ProviderID("anthropic")
+	mid, _ := s.ModelID(pid, "claude-sonnet-4-5")
+	day1 := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC)
+	day2b := time.Date(2026, 7, 18, 14, 0, 0, 0, time.UTC)
+
+	rows := []UsageRow{
+		{ProviderID: pid, ModelID: mid, BucketStart: day1, BucketEnd: day1.Add(time.Hour), CostUSD: 1.00},
+		{ProviderID: pid, ModelID: mid, BucketStart: day2, BucketEnd: day2.Add(time.Hour), CostUSD: 2.00},
+		{ProviderID: pid, ModelID: mid, BucketStart: day2b, BucketEnd: day2b.Add(time.Hour), CostUSD: 0.50},
+	}
+	for _, r := range rows {
+		if err := s.InsertUsage(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.DailyCostSince(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d days, want 2: %+v", len(got), got)
+	}
+	// Oldest first, and the two day-2 rows are summed.
+	if got[0].Day != "2026-07-17" || abs(got[0].CostUSD-1.00) > 0.0001 {
+		t.Fatalf("day 0 = %+v", got[0])
+	}
+	if got[1].Day != "2026-07-18" || abs(got[1].CostUSD-2.50) > 0.0001 {
+		t.Fatalf("day 1 = %+v", got[1])
+	}
+}
+
 func abs(f float64) float64 {
 	if f < 0 {
 		return -f

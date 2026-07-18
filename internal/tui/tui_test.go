@@ -7,6 +7,7 @@ import (
 
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -29,6 +30,53 @@ func TestOnboardingWelcomeScreen(t *testing.T) {
 func update(m tea.Model, msg tea.Msg) model {
 	updated, _ := m.Update(msg)
 	return updated.(model)
+}
+
+func TestDashboardTabs(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Defaults.MonthlyBudgetUSD = 100
+	cfg.Defaults.AlertThresholds = []int{50, 75, 90}
+
+	m := model{
+		cfg:       cfg,
+		state:     stateDashboard,
+		today:     4.00,
+		month:     40.00,
+		projected: 80.00, // 80% of budget → crosses 50 & 75
+		notified:  75,
+		daily: []store.DayCost{
+			{Day: "2026-07-17", CostUSD: 1.00},
+			{Day: "2026-07-18", CostUSD: 2.50},
+		},
+	}
+
+	// Live tab (default) shows spend.
+	if v := m.View(); !strings.Contains(v, "Month:") || !strings.Contains(v, "Projected:") {
+		t.Errorf("live tab missing spend, got: %s", v)
+	}
+
+	// Switch to History.
+	m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	if m.tab != tabHistory {
+		t.Fatalf("expected tabHistory, got %v", m.tab)
+	}
+	if v := m.View(); !strings.Contains(v, "07-18") || !strings.Contains(v, "Daily cost") {
+		t.Errorf("history tab missing chart, got: %s", v)
+	}
+
+	// Switch to Alerts.
+	m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	if m.tab != tabAlerts {
+		t.Fatalf("expected tabAlerts, got %v", m.tab)
+	}
+	v := m.View()
+	if !strings.Contains(v, "Thresholds:") {
+		t.Errorf("alerts tab missing thresholds, got: %s", v)
+	}
+	// 75% threshold is crossed and notified; 90% is not yet crossed.
+	if !strings.Contains(v, "notified") || !strings.Contains(v, "not yet") {
+		t.Errorf("alerts tab missing threshold states, got: %s", v)
+	}
 }
 
 func TestOnboardingFlow(t *testing.T) {

@@ -198,6 +198,38 @@ func (s *Store) TotalCostSince(since time.Time) (float64, error) {
 	return total.Float64, nil
 }
 
+// DayCost is a single day's total cost. Day is "YYYY-MM-DD" (UTC bucket date).
+type DayCost struct {
+	Day     string
+	CostUSD float64
+}
+
+// DailyCostSince returns total cost grouped by calendar day since the given
+// time, oldest day first.
+func (s *Store) DailyCostSince(since time.Time) ([]DayCost, error) {
+	rows, err := s.db.Query(`
+		SELECT substr(bucket_start, 1, 10) AS day, SUM(cost_usd) AS cost
+		FROM usage_records
+		WHERE bucket_start >= ?
+		GROUP BY day
+		ORDER BY day ASC
+	`, since.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []DayCost
+	for rows.Next() {
+		var d DayCost
+		if err := rows.Scan(&d.Day, &d.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // GetConfigState returns the stored value for a key, or "" if unset.
 func (s *Store) GetConfigState(key string) (string, error) {
 	var v string

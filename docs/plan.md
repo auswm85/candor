@@ -356,11 +356,12 @@ tt status                   # daemon health, last poll time, DB size
 - [x] `tt daemon` + `tt status` + `tt service` (launchd/systemd unit generation)
 - [x] Terminal notifications on all 3 platforms (macOS/Linux/Windows)
 
-### M3 — TUI (3 days) — in progress
+### M3 — TUI (3 days) — mostly complete
 
-- [x] bubbletea live dashboard view (today/month spend vs budget)
-- [ ] History view (30-day chart)
-- [ ] Alerts view
+- [x] bubbletea live dashboard view (today/month/projected vs budget)
+- [x] History view (30-day daily cost bar chart)
+- [x] Alerts view (thresholds + crossed/notified state)
+- [x] Tabbed navigation (1/2/3, tab/arrows)
 - [ ] Snapshot tests _(has unit tests, not golden snapshots)_
 
 ### M4 — Web Dashboard (4 days) — not started
