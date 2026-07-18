@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/auswm85/token-tracker/internal/provider"
@@ -223,6 +224,15 @@ func (a *Adapter) get(ctx context.Context, u string, dst any) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		if !strings.HasPrefix(a.apiKey, "sk-ant-admin") {
+			return fmt.Errorf("anthropic 401: the usage/cost API requires an Admin API key " +
+				"(sk-ant-admin01-…, available to organization accounts only), but the stored key is a standard API key. " +
+				"Create one at https://platform.claude.com/settings/admin-keys and store it with `tt auth anthropic`")
+		}
+		return fmt.Errorf("anthropic 401 — Admin key rejected (expired or revoked?): %s",
+			string(body[:min(len(body), 300)]))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("anthropic %s: %s", resp.Status, string(body[:min(len(body), 500)]))

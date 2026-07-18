@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+func TestPollUsage_NonAdminKeyGivesAdminHint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`))
+	}))
+	defer server.Close()
+
+	// A standard (non-admin) key should produce the actionable admin-key hint.
+	a := New("sk-ant-api03-standard-key").WithBaseURL(server.URL)
+	_, err := a.PollUsage(context.Background(), time.Now().Add(-24*time.Hour))
+	if err == nil {
+		t.Fatal("expected error for non-admin key")
+	}
+	if !strings.Contains(err.Error(), "Admin API key") {
+		t.Errorf("error should mention Admin API key, got: %v", err)
+	}
+}
+
 func TestPollMessages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.URL.Path, "usage_report/messages") {
