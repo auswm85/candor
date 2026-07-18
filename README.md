@@ -89,7 +89,7 @@ See `docs/plan.md` for the full implementation plan.
 | ------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/usage_report/claude_code` | **Working** — requires Admin API key, covers API + Claude Code costs, includes cache tracking |
 | OpenRouter                | `GET /api/v1/activity`                                                                           | **Working** — requires a provisioning key (openrouter.ai/settings/provisioning-keys); per-day, per-model cost + tokens |
-| OpenAI                    | `GET /v1/organization/costs`                                                                     | Planned — adapter stubbed (`not yet implemented`)                                             |
+| OpenAI                    | `GET /v1/organization/costs`                                                                     | **Working** — requires an Admin key (`platform.openai.com/settings/organization/admin-keys`, self-serve incl. personal accounts); per-day, per-model cost + tokens |
 | Ollama / vLLM / LM Studio | N/A (no billing API)                                                                             | v1.1 deferred — proxy mode TBD                                                                |
 
 ## Development

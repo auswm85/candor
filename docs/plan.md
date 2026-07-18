@@ -343,7 +343,7 @@ tt status                   # daemon health, last poll time, DB size
 - [x] `go mod init`, repo scaffolding
 - [x] SQLite migrations _(hand-written store + embedded migration runner; not sqlc)_
 - [x] Config loader (viper + keyring)
-- [ ] OpenAI provider adapter (polling + pagination) — **stubbed**, needs verified response schema
+- [x] OpenAI provider adapter (`GET /v1/organization/costs`, per-day/per-model via `line_item`; requires an Admin key). Note: `amount.value` is a string and `/costs` carries `quantity` (tokens) — the plan's earlier "usage_type token breakdown" note was wrong; verified against the live API.
 - [x] OpenRouter provider adapter (`GET /api/v1/activity`, per-day/per-model; requires a provisioning key)
 - [x] Anthropic provider adapter (usage_report/messages + claude_code, requires Admin API key) _(cost_report not used — cost computed by engine)_
 - [x] Cost engine (pure function, unit-tested; built-in default prices)
