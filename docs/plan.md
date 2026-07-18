@@ -344,7 +344,7 @@ tt status                   # daemon health, last poll time, DB size
 - [x] SQLite migrations _(hand-written store + embedded migration runner; not sqlc)_
 - [x] Config loader (viper + keyring)
 - [ ] OpenAI provider adapter (polling + pagination) — **stubbed**, needs verified response schema
-- [ ] OpenRouter provider adapter — **stubbed**, needs verified response schema
+- [x] OpenRouter provider adapter (`GET /api/v1/activity`, per-day/per-model; requires a provisioning key)
 - [x] Anthropic provider adapter (usage_report/messages + claude_code, requires Admin API key) _(cost_report not used — cost computed by engine)_
 - [x] Cost engine (pure function, unit-tested; built-in default prices)
 - [x] `tt spend today` CLI — first end-to-end vertical slice

@@ -88,8 +88,8 @@ See `docs/plan.md` for the full implementation plan.
 | Provider                  | Endpoint                                                                                         | Status                                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/usage_report/claude_code` | **Working** — requires Admin API key, covers API + Claude Code costs, includes cache tracking |
+| OpenRouter                | `GET /api/v1/activity`                                                                           | **Working** — requires a provisioning key (openrouter.ai/settings/provisioning-keys); per-day, per-model cost + tokens |
 | OpenAI                    | `GET /v1/organization/costs`                                                                     | Planned — adapter stubbed (`not yet implemented`)                                             |
-| OpenRouter                | `GET /api/v1/usage`                                                                              | Planned — adapter stubbed (`not yet implemented`)                                             |
 | Ollama / vLLM / LM Studio | N/A (no billing API)                                                                             | v1.1 deferred — proxy mode TBD                                                                |
 
 ## Development
