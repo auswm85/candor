@@ -31,8 +31,8 @@ type Defaults struct {
 }
 
 type ProvCfg struct {
-	OpenAI    ProviderEntry `mapstructure:"openai"`
-	Anthropic ProviderEntry `mapstructure:"anthropic"`
+	OpenAI     ProviderEntry `mapstructure:"openai"`
+	Anthropic  ProviderEntry `mapstructure:"anthropic"`
 	OpenRouter ProviderEntry `mapstructure:"openrouter"`
 }
 
@@ -57,6 +57,9 @@ func Load() (*Config, error) {
 	v.SetDefault("tui.refresh", "1s")
 	v.SetDefault("defaults.monthly_budget_usd", 100)
 	v.SetDefault("defaults.alert_thresholds", []int{50, 75, 90, 100})
+	v.SetDefault("providers.openai.enabled", true)
+	v.SetDefault("providers.anthropic.enabled", true)
+	v.SetDefault("providers.openrouter.enabled", true)
 
 	v.AutomaticEnv()
 

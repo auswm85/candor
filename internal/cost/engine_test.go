@@ -9,20 +9,20 @@ func TestEngine_Compute(t *testing.T) {
 	prices := Prices{
 		"openai": {
 			"gpt-4o": {
-				InputPer1M:        2.50,
-				CachedInputPer1M:  0.3125,
-				CacheWritePer1M:   3.125,
-				OutputPer1M:       10.00,
+				InputPer1M:       2.50,
+				CachedInputPer1M: 0.3125,
+				CacheWritePer1M:  3.125,
+				OutputPer1M:      10.00,
 			},
 		},
 	}
 	e := New(prices)
 
 	tests := []struct {
-		name                   string
-		provider, model         string
+		name                         string
+		provider, model              string
 		input, cached, write, output int64
-		want                   float64
+		want                         float64
 	}{
 		{
 			name:     "base input only",
@@ -77,10 +77,10 @@ func TestEngine_ProjectMonthly(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name         string
-		since        time.Time
-		current      float64
-		wantMonth    float64
+		name      string
+		since     time.Time
+		current   float64
+		wantMonth float64
 	}{
 		{
 			name:      "10 days at $33 = ~$99/month",

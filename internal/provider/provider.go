@@ -6,7 +6,7 @@ import (
 )
 
 type UsageRecord struct {
-	Provider         string
+	Provider          string
 	Model             string
 	BucketStart       time.Time
 	BucketEnd         time.Time

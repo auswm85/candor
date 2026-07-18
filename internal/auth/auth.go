@@ -37,14 +37,19 @@ func loadFile() fileStore {
 		return fileStore{}
 	}
 	var s fileStore
-	json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fileStore{}
+	}
 	return s
 }
 
-func saveFile(s fileStore) {
+func saveFile(s fileStore) error {
 	path := filepath.Join(os.TempDir(), "token-tracker-keys.json")
-	data, _ := json.Marshal(s)
-	os.WriteFile(path, data, 0600)
+	data, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 func SetProviderKey(provider, key string) error {
@@ -53,8 +58,7 @@ func SetProviderKey(provider, key string) error {
 		defer mu.Unlock()
 		s := loadFile()
 		s[keyName(provider)] = key
-		saveFile(s)
-		return nil
+		return saveFile(s)
 	}
 	return keyring.Set(serviceName, keyName(provider), key)
 }
@@ -84,8 +88,7 @@ func ClearProviderKey(provider string) error {
 		defer mu.Unlock()
 		s := loadFile()
 		delete(s, keyName(provider))
-		saveFile(s)
-		return nil
+		return saveFile(s)
 	}
 	return keyring.Delete(serviceName, keyName(provider))
 }

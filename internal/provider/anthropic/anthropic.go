@@ -107,17 +107,9 @@ func (a *Adapter) pollMessages(ctx context.Context, since time.Time) ([]provider
 
 // --- Claude Code usage ---
 
-type claudeCodeUserMetrics struct {
-	InputTokens     int64
-	CacheReadTokens int64
-	CacheCreate     int64
-	OutputTokens    int64
-	EstimatedCost   float64
-}
-
 type claudeCodeResponse struct {
 	Data []struct {
-		Date string `json:"date"`
+		Date           string `json:"date"`
 		ModelBreakdown []struct {
 			Model  string `json:"model"`
 			Tokens struct {
@@ -226,7 +218,7 @@ func (a *Adapter) get(ctx context.Context, u string, dst any) error {
 	if err != nil {
 		return fmt.Errorf("http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

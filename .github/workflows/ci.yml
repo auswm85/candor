@@ -17,6 +17,9 @@ jobs:
           cache: true
       - run: go mod tidy
       - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12
       - run: go test -race -count=1 ./...
       - run: go build ./cmd/token-tracker
       - run: go build ./cmd/tt

@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/auswm85/token-tracker/internal/auth"
+	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "tt",
 	Short: "token-tracker — local-first LLM cost monitor",
-	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Help()
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
 	},
 }
 
@@ -105,10 +108,103 @@ var clearCmd = &cobra.Command{
 	},
 }
 
+var spendCmd = &cobra.Command{
+	Use:   "spend [today|month]",
+	Short: "Show recorded LLM spend",
+	Long: `Print recorded spend for a period.
+
+Examples:
+  tt spend today             Today's total spend
+  tt spend month             This month's total spend
+  tt spend month --by-model  This month's spend, broken down by model`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		period := "today"
+		if len(args) > 0 {
+			period = strings.ToLower(args[0])
+		}
+
+		now := time.Now()
+		var since time.Time
+		switch period {
+		case "today":
+			since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		case "month":
+			since = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		default:
+			return fmt.Errorf("unknown period %q (use 'today' or 'month')", period)
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+
+		byModel, _ := cmd.Flags().GetBool("by-model")
+		if byModel {
+			rows, err := st.CostByModelSince(since)
+			if err != nil {
+				return fmt.Errorf("query: %w", err)
+			}
+			if len(rows) == 0 {
+				fmt.Printf("No usage recorded since %s.\n", since.Format("2006-01-02"))
+				return nil
+			}
+			var total float64
+			for _, r := range rows {
+				fmt.Printf("  %-32s $%8.2f\n", r.Provider+"/"+r.Model, r.CostUSD)
+				total += r.CostUSD
+			}
+			fmt.Printf("  %-32s $%8.2f\n", "TOTAL", total)
+			return nil
+		}
+
+		total, err := st.TotalCostSince(since)
+		if err != nil {
+			return fmt.Errorf("query: %w", err)
+		}
+		label := strings.ToUpper(period[:1]) + period[1:]
+		fmt.Printf("%s spend: $%.2f\n", label, total)
+		return nil
+	},
+}
+
+var migrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Apply pending database migrations",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		fmt.Printf("Migrations applied. Database: %s\n", cfg.Database)
+		return nil
+	},
+}
+
 func init() {
 	authCmd.Flags().Bool("list", false, "List configured providers")
+	spendCmd.Flags().Bool("by-model", false, "Break spend down by model")
 	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(clearCmd)
+	rootCmd.AddCommand(spendCmd)
+	rootCmd.AddCommand(migrateCmd)
 }
 
 func main() {

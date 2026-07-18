@@ -1,0 +1,16 @@
+version: "2"
+
+linters:
+  # Default set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  exclusions:
+    rules:
+      # Test helpers routinely ignore returns from os.Setenv, w.Write,
+      # Close, etc. Keeping errcheck strict on production code only.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

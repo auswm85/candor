@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/auswm85/token-tracker/internal/alert"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -33,15 +35,21 @@ const (
 type model struct {
 	cfg     *config.Config
 	alerter *alert.Checker
+	store   *store.Store
 	state   state
 	step    step
 
+	// dashboard state
+	today    float64
+	month    float64
+	spendErr string
+
 	// onboarding state
-	pickIndex        int
-	input            textinput.Model
-	inputErr         string
-	configured       []string
-	skipped          []string
+	pickIndex  int
+	input      textinput.Model
+	inputErr   string
+	configured []string
+	skipped    []string
 }
 
 func NewModel(cfg *config.Config) model {
@@ -57,12 +65,53 @@ func NewModel(cfg *config.Config) model {
 	return m
 }
 
+// WithStore attaches a store so the dashboard can display recorded spend.
+func (m model) WithStore(st *store.Store) model {
+	m.store = st
+	return m
+}
+
 func NewProgram(m model, alerter *alert.Checker) *tea.Program {
 	m.alerter = alerter
 	return tea.NewProgram(m)
 }
 
+type spendMsg struct {
+	today float64
+	month float64
+	err   error
+}
+
+type tickMsg struct{}
+
+// loadSpend reads today's and this month's totals from the store.
+func (m model) loadSpend() tea.Msg {
+	if m.store == nil {
+		return spendMsg{}
+	}
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	today, err := m.store.TotalCostSince(startOfDay)
+	if err != nil {
+		return spendMsg{err: err}
+	}
+	month, err := m.store.TotalCostSince(startOfMonth)
+	if err != nil {
+		return spendMsg{err: err}
+	}
+	return spendMsg{today: today, month: month}
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
 func (m model) Init() tea.Cmd {
+	if m.state == stateDashboard && m.store != nil {
+		return tea.Batch(m.loadSpend, tick())
+	}
 	return nil
 }
 
@@ -191,6 +240,9 @@ func (m model) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			m.state = stateDashboard
 			log.Printf("onboarding complete: configured=%v skipped=%v", m.configured, m.skipped)
+			if m.store != nil {
+				return m, tea.Batch(m.loadSpend, tick())
+			}
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		}
@@ -204,7 +256,19 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "r":
+			return m, m.loadSpend
 		}
+	case spendMsg:
+		if msg.err != nil {
+			m.spendErr = msg.err.Error()
+		} else {
+			m.spendErr = ""
+			m.today = msg.today
+			m.month = msg.month
+		}
+	case tickMsg:
+		return m, tea.Batch(m.loadSpend, tick())
 	}
 	return m, nil
 }
@@ -261,7 +325,7 @@ func (m model) viewPickProvider() string {
 		if auth.HasProviderKey(p) {
 			status = " [already configured]"
 		}
-		b.WriteString(fmt.Sprintf("%s%s%s\n", prefix, p, status))
+		fmt.Fprintf(&b, "%s%s%s\n", prefix, p, status)
 	}
 	b.WriteString("\n[Y]es  [N]o  [↑/↓] navigate  [q] quit\n")
 	return b.String()
@@ -269,10 +333,10 @@ func (m model) viewPickProvider() string {
 
 func (m model) viewInputKey() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Enter your %s API key:\n\n", providers[m.pickIndex]))
-	b.WriteString(fmt.Sprintf("  %s\n", m.input.View()))
+	fmt.Fprintf(&b, "Enter your %s API key:\n\n", providers[m.pickIndex])
+	fmt.Fprintf(&b, "  %s\n", m.input.View())
 	if m.inputErr != "" {
-		b.WriteString(fmt.Sprintf("\n  ⚠ %s\n", m.inputErr))
+		fmt.Fprintf(&b, "\n  ⚠ %s\n", m.inputErr)
 	}
 	b.WriteString("\n[Enter] confirm  [Esc] back  [q] quit\n")
 	return b.String()
@@ -284,13 +348,13 @@ func (m model) viewDone() string {
 	if len(m.configured) > 0 {
 		b.WriteString("Configured:\n")
 		for _, p := range m.configured {
-			b.WriteString(fmt.Sprintf("  ✓ %s\n", p))
+			fmt.Fprintf(&b, "  ✓ %s\n", p)
 		}
 	}
 	if len(m.skipped) > 0 {
 		b.WriteString("Skipped:\n")
 		for _, p := range m.skipped {
-			b.WriteString(fmt.Sprintf("  ✗ %s\n", p))
+			fmt.Fprintf(&b, "  ✗ %s\n", p)
 		}
 	}
 	b.WriteString("\nPress Enter to start the dashboard.\n")
@@ -300,11 +364,43 @@ func (m model) viewDone() string {
 
 func (m model) viewDashboard() string {
 	configured := auth.ListConfiguredProviders()
-	return fmt.Sprintf(
-		"token-tracker — monitoring\n\n"+
-			"Configured providers: %s\n"+
-			"Web dashboard: http://127.0.0.1:7878\n\n"+
-			"Press q to quit.\n",
-		strings.Join(configured, ", "),
-	)
+
+	var b strings.Builder
+	b.WriteString("token-tracker — monitoring\n\n")
+
+	budget := m.cfg.Defaults.MonthlyBudgetUSD
+	if budget > 0 {
+		pct := m.month / budget * 100
+		flag := ""
+		if pct >= 90 {
+			flag = " ⚠"
+		}
+		fmt.Fprintf(&b, "Today:  $%.2f\n", m.today)
+		fmt.Fprintf(&b, "Month:  $%.2f / $%.0f budget  %s%s\n",
+			m.month, budget, progressBar(pct), flag)
+	} else {
+		fmt.Fprintf(&b, "Today:  $%.2f\n", m.today)
+		fmt.Fprintf(&b, "Month:  $%.2f\n", m.month)
+	}
+
+	if m.spendErr != "" {
+		fmt.Fprintf(&b, "\n⚠ %s\n", m.spendErr)
+	}
+
+	fmt.Fprintf(&b, "\nConfigured providers: %s\n", strings.Join(configured, ", "))
+	b.WriteString("Web dashboard: http://127.0.0.1:7878\n\n")
+	b.WriteString("Press r to refresh, q to quit.\n")
+	return b.String()
+}
+
+// progressBar renders a 10-cell bar for a 0-100 percentage.
+func progressBar(pct float64) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 10)
+	return "[" + strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled) + fmt.Sprintf("] %.0f%%", pct)
 }
