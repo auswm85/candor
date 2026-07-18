@@ -1,3 +1,9 @@
+// Package anthropic implements the Provider interface for Anthropic's Usage & Cost API.
+// Requires an Admin API key (sk-ant-admin01-...), not a standard API key.
+// Endpoints:
+//
+//	Usage: GET /v1/organizations/usage_report/messages?starting_at=...&ending_at=...&group_by[]=model&bucket_width=1d
+//	Cost:  GET /v1/organizations/cost_report?starting_at=...&ending_at=...&group_by[]=model
 package anthropic
 
 import (

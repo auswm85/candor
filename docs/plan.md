@@ -20,7 +20,7 @@
 ### Supported providers (Strategy A — poll official billing APIs only)
 
 - **OpenAI** — `GET /v1/organization/costs?start_time=...&end_time=...&group_by[]=model&group_by[]=line_item`
-- **Anthropic** — `GET /v1/organizations/usage_messages?start=...&end=...` (TBD — M0 spike to verify)
+- **Anthropic** — `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/cost_report` (requires Admin API key — `sk-ant-admin01-...`)
 - **OpenRouter** — `GET /api/v1/usage`
 
 ### Explicitly NOT in v1
@@ -49,7 +49,7 @@ token-tracker/
 │   ├── poll/                      # scheduler
 │   ├── provider/
 │   │   ├── openai/                # /v1/organization/costs
-│   │   ├── anthropic/             # /v1/organizations/usage_messages
+│   │   ├── anthropic/             # /v1/organizations/usage_report/messages + /cost_report
 │   │   └── openrouter/            # /api/v1/usage
 │   ├── cost/                      # cost rules engine (YAML-driven)
 │   ├── store/                     # SQLite via sqlc + migrations
@@ -153,10 +153,14 @@ providers:
 - Pagination: cursor-based via `after` param.
 - Rate limit: 60 req/min on org endpoints.
 
-**Anthropic (TBD — M0 spike to verify):**
+**Anthropic (requires Admin API key):**
 
-- Endpoint: `GET /v1/organizations/usage_messages?start=...&end=...` (may not be API-accessible).
-- **RISK:** If no API endpoint exists, ship OpenAI-only for v1. Document Anthropic as "v1.1 — pending SDK instrumentation."
+- Usage endpoint: `GET /v1/organizations/usage_report/messages?starting_at=...&ending_at=...&group_by[]=model&bucket_width=1d`
+- Cost endpoint: `GET /v1/organizations/cost_report?starting_at=...&ending_at=...&group_by[]=model`
+- Auth: `x-api-key: $ANTHROPIC_ADMIN_KEY` (Admin API key — `sk-ant-admin01-...`)
+- Returns token counts with `cached_input`, `cache_creation`, `output` breakdowns — cache tracking is built in
+- Cost endpoint returns USD as decimal strings; data freshness ~5 min; supports 1-min polling
+- Pagination: cursor-based via `next_page` / `has_more`
 
 **OpenRouter:**
 
@@ -327,12 +331,11 @@ tt status                   # daemon health, last poll time, DB size
 
 ## 12. Milestones
 
-### M0 — Spike (1 day, before any other work)
+### M0 — Spike (resolved — Anthropic docs confirmed)
 
-- [ ] Verify Anthropic `/v1/organizations/usage_messages` endpoint
-- [ ] Verify OpenRouter `/api/v1/usage` endpoint
-- [ ] Document response shapes, confirm cache-breakdown availability
-- [ ] Decision: ship 3-provider v1, or downgrade Anthropic to "v1.1 pending"
+- [x] Anthropic: `GET /v1/organizations/usage_report/messages` exists, requires Admin API key, includes cache tracking
+- [x] OpenRouter: `GET /api/v1/usage` works with standard API key, includes cache breakdown
+- [x] Decision: ship 3-provider v1 (OpenAI, Anthropic, OpenRouter)
 
 ### M1 — Skeleton (4 days)
 
@@ -341,7 +344,7 @@ tt status                   # daemon health, last poll time, DB size
 - [ ] Config loader (viper + keyring)
 - [ ] OpenAI provider adapter (polling + pagination)
 - [ ] OpenRouter provider adapter
-- [ ] Anthropic provider adapter (if M0 succeeded)
+- [ ] Anthropic provider adapter (usage_report + cost_report, requires Admin API key)
 - [ ] Cost engine (pure function, fully unit-tested)
 - [ ] `tt spend today` CLI — first end-to-end vertical slice
 
@@ -387,15 +390,16 @@ tt status                   # daemon health, last poll time, DB size
 
 ## 13. Risks & Mitigations
 
-| Risk                                                                    | Severity | Mitigation                                                                                                         |
-| ----------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| Anthropic has no usable `/usage` endpoint                               | High     | M0 spike before any code. If blocked, ship OpenAI+OpenRouter v1; Anthropic moves to v1.1 with SDK instrumentation. |
-| OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                   |
-| Cache-read vs cache-write breakdown not available in aggregate endpoint | Medium   | OpenAI's `/v1/organization/costs` returns `usage_type: cached_tokens` — verify in M0.                              |
-| Pricing drift (providers change prices)                                 | Medium   | `tt prices diff` command, no auto-update.                                                                          |
-| Go learning curve (no existing Go projects in this directory)           | Medium   | Stick to stdlib where possible; budget 2 extra days in M1 for ramp-up.                                             |
-| TUI snapshot tests brittle                                              | Low      | Use `teatest` golden files, review diffs in PR.                                                                    |
-| OS keyring cross-platform edge cases                                    | Low      | `zalando/go-keyring` well-maintained; fallback to env var with warning.                                            |
+| Risk                                                                    | Severity | Mitigation                                                                                                                        |
+| ----------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Anthropic Admin API key requirement (not standard API key)              | Low      | Documented in config as `keyring_key: token-tracker/anthropic-admin-key`. Users generate via Console → Settings → Admin API keys. |
+| OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
+| OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
+| Cache-read vs cache-write breakdown not available in aggregate endpoint | Medium   | OpenAI's `/v1/organization/costs` returns `usage_type: cached_tokens` — verify in M0.                                             |
+| Pricing drift (providers change prices)                                 | Medium   | `tt prices diff` command, no auto-update.                                                                                         |
+| Go learning curve (no existing Go projects in this directory)           | Medium   | Stick to stdlib where possible; budget 2 extra days in M1 for ramp-up.                                                            |
+| TUI snapshot tests brittle                                              | Low      | Use `teatest` golden files, review diffs in PR.                                                                                   |
+| OS keyring cross-platform edge cases                                    | Low      | `zalando/go-keyring` well-maintained; fallback to env var with warning.                                                           |
 
 ## 14. Alternatives Considered
 

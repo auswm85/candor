@@ -72,12 +72,12 @@ See `docs/plan.md` for the full implementation plan.
 
 ## Provider Support
 
-| Provider                  | Endpoint                               | Status                                              |
-| ------------------------- | -------------------------------------- | --------------------------------------------------- |
-| OpenAI                    | `GET /v1/organization/costs`           | v1 — includes cache-read/write breakdown            |
-| Anthropic                 | `GET /v1/organizations/usage_messages` | v1 (TBD — M0 spike to verify endpoint availability) |
-| OpenRouter                | `GET /api/v1/usage`                    | v1 — includes per-model cost breakdown              |
-| Ollama / vLLM / LM Studio | N/A (no billing API)                   | v1.1 deferred — proxy mode TBD                      |
+| Provider                  | Endpoint                                                                            | Status                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| OpenAI                    | `GET /v1/organization/costs`                                                        | v1 — includes cache-read/write breakdown                                    |
+| Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/cost_report` | v1 — requires Admin API key (`sk-ant-admin01-...`), includes cache tracking |
+| OpenRouter                | `GET /api/v1/usage`                                                                 | v1 — includes per-model cost breakdown                                      |
+| Ollama / vLLM / LM Studio | N/A (no billing API)                                                                | v1.1 deferred — proxy mode TBD                                              |
 
 ## Development
 

@@ -18,7 +18,7 @@ providers:
     keyring_key: token-tracker/openai-api-key
   anthropic:
     enabled: true
-    keyring_key: token-tracker/anthropic-api-key
+    keyring_key: token-tracker/anthropic-admin-key # Requires an Admin API key (sk-ant-admin01-...)
   openrouter:
     enabled: true
     keyring_key: token-tracker/openrouter-api-key
