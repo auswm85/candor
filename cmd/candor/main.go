@@ -81,6 +81,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	// The bubbletea TUI owns the terminal, so redirect log output to a file next
 	// to the database instead of letting it corrupt the screen.
 	logPath := filepath.Join(filepath.Dir(cfg.Database), "daemon.log")
+	rotateLog(logPath)
 	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 		_ = os.Chmod(logPath, 0o600)
 		defer func() { _ = lf.Close() }()
@@ -491,6 +492,28 @@ var statusCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+const (
+	logMaxBytes = 10 << 20 // rotate daemon.log once it passes 10 MiB
+	logKeep     = 3        // keep daemon.log.1 .. .3
+)
+
+// rotateLog rotates path (daemon.log → .1 → .2 → .3, oldest dropped) when it has
+// grown past logMaxBytes. Called at dashboard startup; candor's log volume is
+// low enough that per-launch rotation keeps the file bounded.
+func rotateLog(path string) { rotateLogAt(path, logMaxBytes) }
+
+func rotateLogAt(path string, maxBytes int64) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() < maxBytes {
+		return
+	}
+	_ = os.Remove(fmt.Sprintf("%s.%d", path, logKeep))
+	for i := logKeep - 1; i >= 1; i-- {
+		_ = os.Rename(fmt.Sprintf("%s.%d", path, i), fmt.Sprintf("%s.%d", path, i+1))
+	}
+	_ = os.Rename(path, path+".1")
 }
 
 // dbSize returns the database file size in bytes, or 0 if unavailable.

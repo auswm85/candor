@@ -190,15 +190,16 @@ All Tier 1 items are shipped — see §8. (Export, `config.Validate`, `status
 --json`, review nits, and test hygiene — including extractor fuzzing, which
 caught a real nil-map panic on a `null` request body.)
 
-### Tier 2 — worthwhile, medium
+### Tier 2 — complete (except one item, intentionally skipped)
 
-- **Budget config refinement** — fractional `soft_thresholds` as a cleaner form of
-  today's `alert_thresholds`, with `monthly_budget_usd` kept as a back-compat
-  alias. Low urgency (thresholds + projection + alert history already exist).
-- **Daily digest** — one scheduled local summary notification (yesterday, MTD,
-  remaining). Marginal for a solo user with a live TUI, but harmless and local.
-- **Log rotation** — rotate `daemon.log` (~10 MB, keep 3) for an always-on
-  `candor proxy` service.
+- [x] **Daily digest** — opt-in `defaults.daily_digest_hour` (0–23; -1 disables);
+      the alert loop sends one summary/day (yesterday, MTD, remaining), deduped
+      via `config_state`.
+- [x] **Log rotation** — `daemon.log` rotates at 10 MiB (keep `.1`–`.3`) on
+      dashboard startup.
+- _Skipped:_ **fractional `soft_thresholds`** config refinement — pure format
+  churn (integer percents → a `budget:` block + back-compat alias) with no new
+  capability; the existing `alert_thresholds` stay.
 
 ### Tier 3 — niche / opt-in
 

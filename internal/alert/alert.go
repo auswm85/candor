@@ -72,6 +72,54 @@ func (c *Checker) Check(projectedMonth float64) (string, error) {
 	return msg, nil
 }
 
+// DailyDigest sends one summary notification per day, at or after the configured
+// `daily_digest_hour`: yesterday's spend, month-to-date, and remaining budget.
+// No-op when the digest hour is unset (-1) or already sent today. Returns the
+// message sent, or "" if nothing was sent.
+func (c *Checker) DailyDigest(now time.Time) (string, error) {
+	hour := c.cfg.Defaults.DailyDigestHour
+	if hour < 0 || hour > 23 || c.store == nil {
+		return "", nil
+	}
+	if now.Hour() < hour {
+		return "", nil // not yet time today
+	}
+	key := "digest_" + now.Format("2006-01-02")
+	if v, err := c.store.GetConfigState(key); err == nil && v != "" {
+		return "", nil // already sent today
+	}
+
+	loc := now.Location()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+
+	// yesterday = (cost since yesterday-start) − (cost since today-start).
+	sinceYesterday, err := c.store.TotalCostSince(yesterdayStart)
+	if err != nil {
+		return "", err
+	}
+	today, err := c.store.TotalCostSince(todayStart)
+	if err != nil {
+		return "", err
+	}
+	mtd, err := c.store.TotalCostSince(monthStart)
+	if err != nil {
+		return "", err
+	}
+	yesterday := sinceYesterday - today
+
+	msg := fmt.Sprintf("Daily digest — yesterday $%.2f · month-to-date $%.2f", yesterday, mtd)
+	if budget := c.cfg.Defaults.MonthlyBudgetUSD; budget > 0 {
+		msg += fmt.Sprintf(" · $%.2f of $%.0f left", budget-mtd, budget)
+	}
+	_ = c.notify(msg)
+	if err := c.store.SetConfigState(key, "1"); err != nil {
+		return msg, err
+	}
+	return msg, nil
+}
+
 func notify(msg string) error {
 	switch runtime.GOOS {
 	case "darwin":

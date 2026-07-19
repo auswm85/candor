@@ -35,6 +35,7 @@ type TUICfg struct {
 type Defaults struct {
 	MonthlyBudgetUSD float64 `mapstructure:"monthly_budget_usd"`
 	AlertThresholds  []int   `mapstructure:"alert_thresholds"`
+	DailyDigestHour  int     `mapstructure:"daily_digest_hour"` // 0–23 local hour; -1 disables
 }
 
 func Load() (*Config, error) {
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 	v.SetDefault("tui.refresh", "1s")
 	v.SetDefault("defaults.monthly_budget_usd", 100)
 	v.SetDefault("defaults.alert_thresholds", []int{50, 75, 90, 100})
+	v.SetDefault("defaults.daily_digest_hour", -1) // disabled by default
 	v.SetDefault("proxy.enabled", true)
 	v.SetDefault("proxy.listen", "127.0.0.1:7879")
 	v.SetDefault("proxy.allow_nonloopback", false)
@@ -92,6 +94,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Proxy.MaxBodyBytes < 0 {
 		return fmt.Errorf("proxy.max_body_bytes must be >= 0, got %d", c.Proxy.MaxBodyBytes)
+	}
+	if h := c.Defaults.DailyDigestHour; h < -1 || h > 23 {
+		return fmt.Errorf("defaults.daily_digest_hour must be 0–23 (or -1 to disable), got %d", h)
 	}
 	return nil
 }

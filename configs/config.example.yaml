@@ -20,6 +20,7 @@ proxy:
 defaults:
   monthly_budget_usd: 100
   alert_thresholds: [50, 75, 90, 100]
+  daily_digest_hour: -1 # local hour (0–23) to send a once-daily spend summary; -1 disables
 
 # Pricing is fetched dynamically from OpenRouter's public model catalog (no auth)
 # on start, cached to <db-dir>/prices.json, and refreshed daily. If the fetch

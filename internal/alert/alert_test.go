@@ -1,7 +1,9 @@
 package alert
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/auswm85/candor/internal/config"
 	"github.com/auswm85/candor/internal/store"
@@ -75,6 +77,45 @@ func TestChecker_LogsHistory(t *testing.T) {
 	}
 	if events[0].ThresholdPct != 90 || events[1].ThresholdPct != 75 {
 		t.Errorf("history thresholds = %d, %d; want 90, 75", events[0].ThresholdPct, events[1].ThresholdPct)
+	}
+}
+
+func TestChecker_DailyDigest(t *testing.T) {
+	c := newTestChecker(t, 100, []int{50})
+	var msgs []string
+	c.notify = func(m string) error { msgs = append(msgs, m); return nil }
+
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC) // 10:00 local
+
+	// Disabled (-1) → nothing.
+	c.cfg.Defaults.DailyDigestHour = -1
+	if m, err := c.DailyDigest(now); err != nil || m != "" {
+		t.Fatalf("disabled digest fired: %q (err %v)", m, err)
+	}
+
+	// Enabled at 09:00, now is 10:00 → fires once.
+	c.cfg.Defaults.DailyDigestHour = 9
+	m, err := c.DailyDigest(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m, "Daily digest") || !strings.Contains(m, "month-to-date") {
+		t.Fatalf("unexpected digest message: %q", m)
+	}
+
+	// Same day again → deduped, no second notification.
+	if m2, _ := c.DailyDigest(now); m2 != "" {
+		t.Fatalf("digest re-fired same day: %q", m2)
+	}
+
+	// Next day but before the hour (08:00 < 09:00) → nothing.
+	early := time.Date(2026, 7, 21, 8, 0, 0, 0, time.UTC)
+	if m3, _ := c.DailyDigest(early); m3 != "" {
+		t.Fatalf("digest fired before the hour: %q", m3)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("sent %d notifications, want exactly 1", len(msgs))
 	}
 }
 

@@ -3,12 +3,52 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/auswm85/candor/internal/store"
 )
+
+func TestRotateLog(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "daemon.log")
+
+	// Under threshold → no rotation.
+	if err := os.WriteFile(log, []byte("small"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rotateLogAt(log, 100)
+	if _, err := os.Stat(log + ".1"); err == nil {
+		t.Fatal("rotated a small file")
+	}
+
+	// Over threshold → current becomes .1, and prior generations shift down.
+	_ = os.WriteFile(log, []byte("current-generation-that-is-over-threshold"), 0o600)
+	_ = os.WriteFile(log+".1", []byte("gen1"), 0o600)
+	_ = os.WriteFile(log+".2", []byte("gen2"), 0o600)
+	_ = os.WriteFile(log+".3", []byte("gen3-should-be-dropped"), 0o600)
+
+	rotateLogAt(log, 10)
+
+	if b, _ := os.ReadFile(log + ".1"); !strings.HasPrefix(string(b), "current") {
+		t.Errorf(".1 = %q, want the rotated current log", b)
+	}
+	if b, _ := os.ReadFile(log + ".2"); string(b) != "gen1" {
+		t.Errorf(".2 = %q, want gen1", b)
+	}
+	if b, _ := os.ReadFile(log + ".3"); string(b) != "gen2" {
+		t.Errorf(".3 = %q, want gen2", b)
+	}
+	if _, err := os.Stat(log + ".4"); err == nil {
+		t.Error("kept a .4; should cap at .3")
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Error("original log still present after rotation")
+	}
+}
 
 func sampleRows() []store.ExportRow {
 	return []store.ExportRow{

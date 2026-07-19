@@ -193,18 +193,22 @@ func ProjectMonth(st *store.Store, now time.Time) (float64, error) {
 	return ProjectMonthValue(month, now), nil
 }
 
-// StartAlertLoop periodically projects monthly spend and fires budget-threshold
-// notifications — the timer-based replacement for the old poll-driven checker.
-// No-op when no budget/thresholds are configured. Runs until ctx is cancelled.
+// StartAlertLoop periodically projects monthly spend to fire budget-threshold
+// notifications and, when enabled, sends a once-daily digest. No-op when neither
+// budget alerts nor a daily digest are configured. Runs until ctx is cancelled.
 func StartAlertLoop(ctx context.Context, cfg *config.Config, st *store.Store, interval time.Duration) {
-	if cfg.Defaults.MonthlyBudgetUSD <= 0 || len(cfg.Defaults.AlertThresholds) == 0 {
+	alertsOn := cfg.Defaults.MonthlyBudgetUSD > 0 && len(cfg.Defaults.AlertThresholds) > 0
+	digestOn := cfg.Defaults.DailyDigestHour >= 0
+	if !alertsOn && !digestOn {
 		return
 	}
 	checker := alert.New(cfg, st)
 	check := func() {
-		if p, err := ProjectMonth(st, time.Now()); err == nil {
+		now := time.Now()
+		if p, err := ProjectMonth(st, now); err == nil {
 			_, _ = checker.Check(p)
 		}
+		_, _ = checker.DailyDigest(now)
 	}
 	go func() {
 		t := time.NewTicker(interval)
