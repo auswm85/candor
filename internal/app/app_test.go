@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -68,6 +69,50 @@ func TestProxyChildEnv(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("all-providers env missing %s, got %v", w, got)
+		}
+	}
+}
+
+func TestOpenCodeConfigContent(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Proxy.Upstreams = map[string]string{
+		"openai": "x", "anthropic": "x", "openrouter": "x",
+	}
+	listen := "127.0.0.1:7879"
+
+	// Scoped to openrouter → only that provider's baseURL, with the /api/v1 path.
+	got, err := OpenCodeConfigContent(cfg, listen, []string{"openrouter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"provider":{"openrouter":{"options":{"baseURL":"http://127.0.0.1:7879/openrouter/api/v1"}}}}`
+	if got != want {
+		t.Errorf("scoped =\n %s\nwant\n %s", got, want)
+	}
+
+	// All providers → valid JSON containing each proxy baseURL.
+	all, err := OpenCodeConfigContent(cfg, listen, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string `json:"baseURL"`
+			} `json:"options"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(all), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	cases := map[string]string{
+		"anthropic":  "http://127.0.0.1:7879/anthropic",
+		"openai":     "http://127.0.0.1:7879/openai/v1",
+		"openrouter": "http://127.0.0.1:7879/openrouter/api/v1",
+	}
+	for p, url := range cases {
+		if parsed.Provider[p].Options.BaseURL != url {
+			t.Errorf("%s baseURL = %q, want %q", p, parsed.Provider[p].Options.BaseURL, url)
 		}
 	}
 }

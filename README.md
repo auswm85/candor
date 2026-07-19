@@ -41,11 +41,18 @@ The proxy forwards each request to the real provider untouched and taps usage fr
 
 ```sh
 candor run -- claude              # Claude Code, usage tracked
-candor run -- opencode            # any harness that reads provider base-URL env vars
+candor run -- opencode            # OpenCode, usage tracked
 candor run --provider anthropic -- claude   # scope to one provider
 ```
 
-If the proxy isn't running, `candor run` launches your harness **directly** (straight to the provider) and just skips tracking — it never breaks your workflow.
+`candor run` points the harness at the proxy for that process only — via
+`ANTHROPIC_BASE_URL` for Claude Code, and via OpenCode's transient
+`OPENCODE_CONFIG_CONTENT` override for OpenCode (nothing persistent either way).
+Other harnesses that don't honor a base-URL env var need their base URL pointed
+at the proxy in their own config (see below).
+
+If the proxy isn't running, `candor run` launches your harness **directly**
+(straight to the provider) and just skips tracking — it never breaks your workflow.
 
 **Or set the base URL yourself** (persists until you unset it), using the provider name as the first path segment:
 

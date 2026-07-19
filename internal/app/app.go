@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -125,6 +126,34 @@ func ProxyChildEnv(cfg *config.Config, listen string, providers []string) []stri
 		}
 	}
 	return out
+}
+
+// OpenCodeConfigContent builds an OpenCode config JSON that overrides each
+// provider's baseURL to point at the local proxy. It's meant to be passed to
+// OpenCode via the OPENCODE_CONFIG_CONTENT env var — the highest-precedence
+// config source, merged over the user's config, so only baseURL changes and
+// only for that one process. Providers empty → all configured upstreams.
+func OpenCodeConfigContent(cfg *config.Config, listen string, providers []string) (string, error) {
+	if len(providers) == 0 {
+		for p := range ProxyUpstreams(cfg) {
+			providers = append(providers, p)
+		}
+	}
+	sort.Strings(providers)
+	prov := make(map[string]any, len(providers))
+	for _, p := range providers {
+		m, ok := childEnvVars[p]
+		if !ok {
+			continue
+		}
+		url := "http://" + listen + "/" + p + m.suffix
+		prov[p] = map[string]any{"options": map[string]any{"baseURL": url}}
+	}
+	b, err := json.Marshal(map[string]any{"provider": prov})
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // ProxyHealthy reports whether a proxy is answering on listen within timeout,

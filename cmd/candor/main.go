@@ -198,6 +198,15 @@ usage just isn't recorded, so it never breaks your workflow.
 		env := os.Environ()
 		if app.ProxyHealthy(listen, 500*time.Millisecond) {
 			env = append(env, app.ProxyChildEnv(cfg, listen, providers)...)
+			// OpenCode ignores base-URL env vars for its OpenRouter/Anthropic
+			// providers, so route it via OPENCODE_CONFIG_CONTENT instead — a
+			// highest-precedence, transient config override (merged over the
+			// user's config; nothing persistent).
+			if filepath.Base(name) == "opencode" {
+				if content, err := app.OpenCodeConfigContent(cfg, listen, providers); err == nil {
+					env = append(env, "OPENCODE_CONFIG_CONTENT="+content)
+				}
+			}
 			fmt.Fprintf(os.Stderr, "▸ routing %s through the proxy at http://%s (usage tracked)\n", name, listen)
 		} else {
 			fmt.Fprintf(os.Stderr, "⚠ proxy not reachable at http://%s — running %s directly; usage will NOT be tracked.\n  start it with `candor` or `candor proxy`.\n", listen, name)
