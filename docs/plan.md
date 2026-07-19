@@ -359,7 +359,7 @@ tt status                   # daemon health, last poll time, DB size
 
 ### M2 — Daemon + Alerts (3 days) — mostly complete
 
-- [x] Poll loop (persists to store) _(backoff/retry still TODO)_
+- [x] Poll loop (persists to store) with exponential backoff + permanent-error skip (typed provider API errors)
 - [x] Alert checker (projected spend vs thresholds, once-per-threshold/month dedup)
 - [x] `tt daemon` + `tt status` + `tt service` (launchd/systemd unit generation)
 - [x] Terminal notifications on all 3 platforms (macOS/Linux/Windows)
