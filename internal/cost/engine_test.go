@@ -1,9 +1,6 @@
 package cost
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
 func TestEngine_Compute(t *testing.T) {
 	prices := Prices{
@@ -67,40 +64,6 @@ func TestEngine_Compute(t *testing.T) {
 			got := e.Compute(tt.provider, tt.model, tt.input, tt.cached, tt.write, tt.output)
 			if abs(got-tt.want) > 0.001 {
 				t.Errorf("Compute() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEngine_ProjectMonthly(t *testing.T) {
-	e := New(nil)
-	now := time.Now()
-
-	tests := []struct {
-		name      string
-		since     time.Time
-		current   float64
-		wantMonth float64
-	}{
-		{
-			name:      "10 days at $33 = ~$99/month",
-			since:     now.Add(-240 * time.Hour), // 10 days
-			current:   33.00,
-			wantMonth: 99.00,
-		},
-		{
-			name:      "full month at $100 = $100",
-			since:     now.Add(-720 * time.Hour), // 30 days
-			current:   100.00,
-			wantMonth: 100.00,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := e.ProjectMonthly("openai", tt.since, tt.current)
-			if abs(got-tt.wantMonth) > 1.0 {
-				t.Errorf("ProjectMonthly() = %.2f, want %.2f", got, tt.wantMonth)
 			}
 		})
 	}

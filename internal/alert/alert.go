@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/auswm85/candor/internal/config"
@@ -79,8 +80,12 @@ func notify(msg string) error {
 	case "linux":
 		return exec.Command("notify-send", "candor", msg).Run()
 	case "windows":
-		script := fmt.Sprintf(
-			`New-BurntToastNotification -Text 'candor', %q`, msg)
+		// Single-quote the message: PowerShell single-quoted strings don't
+		// interpolate $vars / $(...), so amounts like "$92" render literally and
+		// nothing in the message can be evaluated. Embedded single quotes are
+		// escaped by doubling them.
+		ps := "'" + strings.ReplaceAll(msg, "'", "''") + "'"
+		script := "New-BurntToastNotification -Text 'candor', " + ps
 		return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
 	}
 	return nil

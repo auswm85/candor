@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -81,6 +82,10 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		_ = os.Chmod(logPath, 0o600)
 		defer func() { _ = lf.Close() }()
 		log.SetOutput(lf)
+	} else {
+		// Can't open the log file — discard logs rather than let them corrupt
+		// the bubbletea-owned terminal via stderr.
+		log.SetOutput(io.Discard)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -336,8 +341,14 @@ var statusCmd = &cobra.Command{
 		now := time.Now()
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		today, _ := st.TotalCostSince(dayStart)
-		month, _ := st.TotalCostSince(monthStart)
+		today, err := st.TotalCostSince(dayStart)
+		if err != nil {
+			return fmt.Errorf("query today's spend: %w", err)
+		}
+		month, err := st.TotalCostSince(monthStart)
+		if err != nil {
+			return fmt.Errorf("query month's spend: %w", err)
+		}
 
 		listen := app.ProxyListen(cfg)
 		proxyState := "not running"

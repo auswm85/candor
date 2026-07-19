@@ -183,5 +183,13 @@ func writeCache(path string, env cacheEnvelope) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(path, b, 0o600)
+	// Write to a temp file then rename, so a concurrent reader (e.g. a second
+	// candor process starting up) never sees a half-written file.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+	}
 }

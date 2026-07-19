@@ -168,19 +168,29 @@ func ProxyHealthy(listen string, timeout time.Duration) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// ProjectMonth extrapolates month-to-date spend to a full-month projection at
-// the current burn rate.
+// ProjectMonthValue extrapolates month-to-date spend to a full-month projection
+// at the current burn rate, using the actual number of days in the current
+// month (not a flat 30). The single source of truth for monthly projection.
+func ProjectMonthValue(monthSpend float64, now time.Time) float64 {
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	elapsed := now.Sub(start).Hours() / 24
+	if elapsed < 1 {
+		elapsed = 1
+	}
+	// Day 0 of next month == last day of this month → its day-of-month is the
+	// length of the current month (handles 28/29/30/31 and December rollover).
+	daysInMonth := float64(time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day())
+	return monthSpend / elapsed * daysInMonth
+}
+
+// ProjectMonth reads month-to-date spend from the store and projects it.
 func ProjectMonth(st *store.Store, now time.Time) (float64, error) {
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	month, err := st.TotalCostSince(start)
 	if err != nil {
 		return 0, err
 	}
-	days := now.Sub(start).Hours() / 24
-	if days < 1 {
-		days = 1
-	}
-	return month / days * 30, nil
+	return ProjectMonthValue(month, now), nil
 }
 
 // StartAlertLoop periodically projects monthly spend and fires budget-threshold

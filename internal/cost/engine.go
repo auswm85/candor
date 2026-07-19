@@ -3,7 +3,6 @@ package cost
 import (
 	"regexp"
 	"strings"
-	"time"
 )
 
 // modelDateSuffix matches a trailing model snapshot date, e.g. the "-20250929"
@@ -80,20 +79,6 @@ func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cache
 	writeCost := float64(cacheWrite) / 1_000_000 * p.CacheWritePer1M
 	outputCost := float64(outputTokens) / 1_000_000 * p.OutputPer1M
 	return baseInput + cachedCost + writeCost + outputCost
-}
-
-func (e *Engine) ProjectMonthly(provider string, since time.Time, currentCost float64) float64 {
-	daysElapsed := time.Since(since).Hours() / 24
-	if daysElapsed < 1 {
-		daysElapsed = 1
-	}
-	daysInMonth := 30.0
-	return currentCost / daysElapsed * daysInMonth
-}
-
-func (e *Engine) Breakdown(prices Prices) map[string]map[string]float64 {
-	_ = prices
-	return nil
 }
 
 // DefaultPrices returns built-in pricing (USD per 1M tokens) used when the

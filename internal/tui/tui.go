@@ -192,12 +192,7 @@ func (m model) loadSpend() tea.Msg {
 		return spendMsg{err: err}
 	}
 
-	// Project the month forward at the current burn rate.
-	daysElapsed := now.Sub(startOfMonth).Hours() / 24
-	if daysElapsed < 1 {
-		daysElapsed = 1
-	}
-	projected := month / daysElapsed * 30
+	projected := app.ProjectMonthValue(month, now)
 
 	notified := 0
 	if v, err := m.store.GetConfigState("alert_notified_" + now.Format("2006-01")); err == nil && v != "" {

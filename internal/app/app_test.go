@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/auswm85/candor/internal/config"
 )
@@ -71,6 +72,33 @@ func TestProxyChildEnv(t *testing.T) {
 			t.Errorf("all-providers env missing %s, got %v", w, got)
 		}
 	}
+}
+
+func TestProjectMonthValue(t *testing.T) {
+	// July has 31 days. 10 days elapsed, $50 spent → 50/10*31 = $155.
+	jul10 := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC) // 10 full days into July
+	if got := ProjectMonthValue(50, jul10); abs(got-155) > 0.001 {
+		t.Errorf("July projection = %.2f, want 155.00 (uses 31 days, not 30)", got)
+	}
+
+	// February 2026 has 28 days. 14 days in, $28 → 28/14*28 = $56.
+	feb15 := time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC)
+	if got := ProjectMonthValue(28, feb15); abs(got-56) > 0.001 {
+		t.Errorf("Feb projection = %.2f, want 56.00", got)
+	}
+
+	// December rollover must not panic and uses 31 days.
+	dec10 := time.Date(2026, 12, 11, 0, 0, 0, 0, time.UTC)
+	if got := ProjectMonthValue(100, dec10); abs(got-310) > 0.001 {
+		t.Errorf("Dec projection = %.2f, want 310.00", got)
+	}
+}
+
+func abs(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
 }
 
 func TestOpenCodeConfigContent(t *testing.T) {
