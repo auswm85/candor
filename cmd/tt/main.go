@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -15,6 +16,8 @@ import (
 	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/cost"
+	"github.com/auswm85/token-tracker/internal/proxy"
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -350,6 +353,67 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+var proxyCmd = &cobra.Command{
+	Use:   "proxy",
+	Short: "Run the local usage-tracking proxy for live per-request spend",
+	Long: `Start a transparent reverse proxy that forwards your LLM calls to their
+real provider and records token usage in real time. Point a tool's base URL at
+it, using the provider name as the first path segment:
+
+  OpenAI:      http://127.0.0.1:7879/openai/v1
+  OpenRouter:  http://127.0.0.1:7879/openrouter/api/v1
+
+Your normal inference key is forwarded untouched — no admin key needed.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+
+		upstreams := cfg.Proxy.Upstreams
+		if len(upstreams) == 0 {
+			upstreams = map[string]string{
+				"openai":     "https://api.openai.com",
+				"openrouter": "https://openrouter.ai",
+				"anthropic":  "https://api.anthropic.com",
+			}
+		}
+		listen := cfg.Proxy.Listen
+		if listen == "" {
+			listen = "127.0.0.1:7879"
+		}
+
+		rec := proxy.NewRecorder(st, cost.New(cost.DefaultPrices()))
+		srv := &http.Server{Addr: listen, Handler: proxy.NewProxy(upstreams, rec)}
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		go func() {
+			<-ctx.Done()
+			_ = srv.Close()
+		}()
+
+		fmt.Printf("token-tracker proxy listening on http://%s\n", listen)
+		for name := range upstreams {
+			fmt.Printf("  %-10s → set base URL to http://%s/%s/...\n", name, listen, name)
+		}
+		fmt.Println("Press Ctrl-C to stop.")
+
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	},
+}
+
 func init() {
 	authCmd.Flags().Bool("list", false, "List configured providers")
 	spendCmd.Flags().Bool("by-model", false, "Break spend down by model")
@@ -360,6 +424,7 @@ func init() {
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(serviceCmd)
+	rootCmd.AddCommand(proxyCmd)
 }
 
 func main() {

@@ -382,6 +382,24 @@ tt status                   # daemon health, last poll time, DB size
 
 **Total estimate: ~17 working days part-time (3-4 weeks).**
 
+### Direction change (2026-07-18): proxy mode promoted to primary
+
+Empirical testing during development showed Strategy A (poll billing APIs) is a
+poor fit for the intended "live spend as you work" use case: every provider
+gates usage behind an admin/management key, and the data is delayed and coarse
+(OpenRouter's activity API refuses the current UTC day entirely). Proxy mode —
+a local transparent reverse proxy that taps `usage` from each response in real
+time — is now the primary ingestion path. It needs no admin keys (the normal
+inference key is forwarded), captures per-request usage instantly, and reuses
+the existing cost engine, store, TUI, and alerts.
+
+- [x] Transparent reverse proxy with per-request usage capture (`tt proxy`)
+- [x] OpenAI-compatible extraction (covers OpenAI + OpenRouter), streaming + non-streaming
+- [x] Additive per-minute storage (`store.AddUsage`)
+- [ ] Anthropic protocol extraction (`/v1/messages`, cache_read/cache_creation)
+- [ ] Run proxy inside the main daemon alongside the TUI
+- [ ] Per-request event log / drill-down
+
 ### v1.1 stretch goals
 
 - Proxy mode for OpenAI-compatible local providers (Ollama, vLLM, LM Studio)

@@ -14,6 +14,13 @@ type Config struct {
 	TUI          TUICfg   `mapstructure:"tui"`
 	Defaults     Defaults `mapstructure:"defaults"`
 	Providers    ProvCfg  `mapstructure:"providers"`
+	Proxy        ProxyCfg `mapstructure:"proxy"`
+}
+
+type ProxyCfg struct {
+	Enabled   bool              `mapstructure:"enabled"`
+	Listen    string            `mapstructure:"listen"`
+	Upstreams map[string]string `mapstructure:"upstreams"`
 }
 
 type WebCfg struct {
@@ -60,6 +67,13 @@ func Load() (*Config, error) {
 	v.SetDefault("providers.openai.enabled", true)
 	v.SetDefault("providers.anthropic.enabled", true)
 	v.SetDefault("providers.openrouter.enabled", true)
+	v.SetDefault("proxy.enabled", false)
+	v.SetDefault("proxy.listen", "127.0.0.1:7879")
+	v.SetDefault("proxy.upstreams", map[string]string{
+		"openai":     "https://api.openai.com",
+		"openrouter": "https://openrouter.ai",
+		"anthropic":  "https://api.anthropic.com",
+	})
 
 	v.AutomaticEnv()
 

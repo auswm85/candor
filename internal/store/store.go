@@ -156,6 +156,30 @@ func (s *Store) InsertUsage(r UsageRow) error {
 	return err
 }
 
+// AddUsage additively records usage into a bucket, summing tokens and cost onto
+// any existing row for the same (provider, model, bucket_start). This is the
+// write path for proxy mode, where each request contributes incrementally —
+// unlike InsertUsage, which overwrites (authoritative poll snapshots).
+func (s *Store) AddUsage(r UsageRow) error {
+	_, err := s.db.Exec(`
+		INSERT INTO usage_records
+			(provider_id, model_id, bucket_start, bucket_end,
+			 input_tokens, cached_input_tokens, cache_write_tokens,
+			 output_tokens, cost_usd, raw_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(provider_id, model_id, bucket_start) DO UPDATE SET
+			input_tokens        = input_tokens + excluded.input_tokens,
+			cached_input_tokens = cached_input_tokens + excluded.cached_input_tokens,
+			cache_write_tokens  = cache_write_tokens + excluded.cache_write_tokens,
+			output_tokens       = output_tokens + excluded.output_tokens,
+			cost_usd            = cost_usd + excluded.cost_usd,
+			fetched_at          = datetime('now')
+	`, r.ProviderID, r.ModelID, r.BucketStart.Format(time.RFC3339),
+		r.BucketEnd.Format(time.RFC3339), r.InputTokens, r.CachedInputTokens,
+		r.CacheWriteTokens, r.OutputTokens, r.CostUSD, r.RawPayload)
+	return err
+}
+
 func (s *Store) UsageSince(since time.Time) ([]UsageRow, error) {
 	rows, err := s.db.Query(`
 		SELECT id, provider_id, model_id, bucket_start, bucket_end,
