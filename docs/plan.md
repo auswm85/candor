@@ -121,6 +121,8 @@ cached_input_tokens, cache_write_tokens, output_tokens, cost_usd, …)` — usag
   accumulated into per-minute buckets; the recorder adds additively so live proxy
   writes land within a refresh tick.
 - `config_state(key, value)` — small key/value store (e.g. per-month alert dedup).
+- `alert_events(fired_at, threshold_pct, projected_usd, budget_usd)` — audit log
+  of budget-threshold notifications actually fired (one row per notification).
 
 ## 6. CLI surface
 
@@ -146,7 +148,8 @@ tabbed main panel:
 - **Live** — 24h trend sparkline, live activity feed (from the recorder ring),
   top models with $/M, cache impact, rate-limit windows.
 - **History** — 30-day daily-cost bar chart.
-- **Alerts** — budget, projected spend, threshold crossed/notified state.
+- **Alerts** — budget, projected spend, threshold crossed/notified state, and a
+  history of recently fired alerts.
 
 ## 8. Status (shipped)
 
@@ -160,6 +163,7 @@ tabbed main panel:
 - [x] Rate-limit window capture + dashboard panel.
 - [x] Full-screen sidebar TUI (Live / History / Alerts) with detached viewer.
 - [x] Timer-based budget projection + OS notifications (macOS/Linux/Windows).
+- [x] Alert history (`alert_events`) — fired notifications logged and shown on the Alerts tab.
 - [x] Single-binary consolidation; single-instance lock.
 
 ## 9. Roadmap

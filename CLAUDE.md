@@ -38,7 +38,7 @@ Single Go binary, single process. Bare `candor` runs the TUI and (guarded by con
 
 - **Proxy** — `internal/proxy`: transparent reverse proxy. First path segment selects the upstream (`/openai/…`, `/anthropic/…`, `/openrouter/…`); a per-provider extractor taps usage from the response (streaming + non-streaming), and rate-limit response headers are parsed into current-window state. The recorder prices each request and writes additively into a per-minute bucket via `store.AddUsage`. Serves `/healthz` (liveness) and `/stats` (live feed/burn/limits JSON for a detached viewer). Fail-open: tapping runs after the client's bytes are forwarded and is panic-isolated, so it can never break a request. Anthropic request bodies are forwarded byte-for-byte (prompt-cache/first-party fidelity).
 - **Cost engine** — `internal/cost`: pure function (provider, model, tokens by tier) → USD. Uses dynamic prices with model-name normalization (dated snapshots → base pricing). Provider-supplied cost (OpenRouter) is used directly when present.
-- **Alert loop** — `internal/alert` + `app.StartAlertLoop`: a ticker projects monthly spend and fires an OS notification the first time each budget threshold is crossed per month (dedup via `config_state`).
+- **Alert loop** — `internal/alert` + `app.StartAlertLoop`: a ticker projects monthly spend and fires an OS notification the first time each budget threshold is crossed per month (dedup via `config_state`), logging each firing to `alert_events` for the Alerts-tab history.
 - **TUI** — `internal/tui`: full-screen bubbletea; sidebar + tabbed Live / History / Alerts, refreshing from the store (and the proxy's `/stats`) on a tick.
 
 The TUI is the only UI.
