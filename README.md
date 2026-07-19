@@ -57,8 +57,21 @@ tt proxy
 token-tracker
 ```
 
-Then point your harness at the proxy, using the provider name as the first path
-segment:
+**Recommended: `tt run` (nothing persistent).** Wrap your harness and its LLM
+traffic is routed through the proxy for that run only — no global config, nothing
+to undo, and your plain `claude` still goes straight to the provider:
+
+```sh
+tt run -- claude              # Claude Code, usage tracked
+tt run -- opencode            # any harness that reads provider base-URL env vars
+tt run --provider anthropic -- claude   # scope to one provider
+```
+
+If the proxy isn't running, `tt run` launches your harness **directly** (straight
+to the provider) and just skips tracking — it never breaks your workflow.
+
+**Or set the base URL yourself** (persists until you unset it), using the
+provider name as the first path segment:
 
 ```sh
 # Claude Code (Anthropic protocol — captures cache-read/cache-creation tokens):
@@ -72,6 +85,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:7879/anthropic claude
 Notes:
 
 - Requires a harness that supports a custom base URL (Claude Code, OpenCode, Aider, Cline, …). Tools that hardcode their endpoint can't be proxied.
+- The proxy is **fail-open**: usage tapping runs after your bytes are forwarded and can never break or stall a request — a parsing bug costs a metric, not your response.
 - On an API key, the engine prices the captured tokens — **actual cost**. On a subscription (Pro/Max OAuth) login there's no per-token billing, so the same figure is an **API-equivalent estimate**: what that usage would cost at list price. Token and cache counts are accurate either way, and dated model IDs (e.g. `claude-sonnet-4-5-20250929`) resolve to current pricing automatically.
 
 ## Configuration

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/auswm85/token-tracker/internal/alert"
@@ -92,6 +94,56 @@ func BuildProxy(cfg *config.Config, rec *proxy.Recorder) *proxy.Proxy {
 		maxBody = 16 << 20 // 16 MiB default
 	}
 	return proxy.NewProxy(ProxyUpstreams(cfg), rec, maxBody)
+}
+
+// childEnvVars maps a provider to the base-URL env vars coding harnesses read,
+// plus the path suffix that follows the provider segment on the proxy (so the
+// forwarded path matches the real provider's API root).
+var childEnvVars = map[string]struct {
+	vars   []string
+	suffix string
+}{
+	"anthropic":  {[]string{"ANTHROPIC_BASE_URL"}, ""},
+	"openai":     {[]string{"OPENAI_BASE_URL", "OPENAI_API_BASE"}, "/v1"},
+	"openrouter": {[]string{"OPENROUTER_BASE_URL", "OPENROUTER_API_BASE"}, "/api/v1"},
+}
+
+// ProxyChildEnv returns KEY=VALUE overrides that point a child harness's
+// provider base URLs at the local proxy. When providers is empty it covers every
+// configured upstream. Applied to a child process only, so the user's normal
+// harness invocation is left completely untouched (no persistent config).
+func ProxyChildEnv(cfg *config.Config, listen string, providers []string) []string {
+	if len(providers) == 0 {
+		for p := range ProxyUpstreams(cfg) {
+			providers = append(providers, p)
+		}
+	}
+	sort.Strings(providers)
+	var out []string
+	for _, p := range providers {
+		m, ok := childEnvVars[p]
+		if !ok {
+			continue
+		}
+		url := "http://" + listen + "/" + p + m.suffix
+		for _, v := range m.vars {
+			out = append(out, v+"="+url)
+		}
+	}
+	return out
+}
+
+// ProxyHealthy reports whether a proxy is answering on listen within timeout,
+// via its /healthz endpoint. Used by `tt run` to decide whether to route a child
+// through the proxy or let it go straight to the provider.
+func ProxyHealthy(listen string, timeout time.Duration) bool {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get("http://" + listen + "/healthz")
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // BuildProviders constructs an adapter for each enabled provider that has a

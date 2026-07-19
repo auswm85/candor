@@ -30,6 +30,25 @@ func newProxy(t *testing.T, provider, upstream string) (*Proxy, *store.Store) {
 	return NewProxy(map[string]string{provider: upstream}, rec, 16<<20), st
 }
 
+func TestProxy_Healthz(t *testing.T) {
+	p, _ := newProxy(t, "openai", "http://unused.invalid")
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	resp, err := http.Get(front.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "ok" {
+		t.Fatalf("body = %q, want %q", body, "ok")
+	}
+}
+
 func TestProxy_RequestBodyTooLarge(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("upstream should not be reached for an oversized body")

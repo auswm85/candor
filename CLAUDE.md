@@ -20,6 +20,7 @@ go build ./cmd/tt              # build the short-form CLI
 go run ./cmd/token-tracker     # launch daemon: TUI + proxy (proxy.enabled defaults true)
 
 # tt subcommands
+go run ./cmd/tt run -- claude   # run a harness with its LLM traffic routed through the proxy (per-process, nothing persistent; falls back to direct if the proxy is down)
 go run ./cmd/tt proxy          # run the live-usage proxy standalone
 go run ./cmd/tt daemon         # headless poll loop (no TUI)
 go run ./cmd/tt spend today    # today's spend  (also: spend month --by-model)

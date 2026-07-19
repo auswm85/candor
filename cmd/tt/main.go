@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -439,9 +440,71 @@ Your normal inference key is forwarded untouched — no admin key needed.`,
 	},
 }
 
+var runCmd = &cobra.Command{
+	Use:   "run [--provider name]... -- <command> [args...]",
+	Short: "Run a harness with its LLM traffic routed through the proxy (nothing persistent)",
+	Long: `Run a coding harness (Claude Code, OpenCode, …) with its provider base-URL
+env vars pointed at the local proxy for that child process ONLY. Usage is
+tracked without changing anything globally — your normal ` + "`claude`" + ` invocation
+still goes straight to the provider, untouched.
+
+If the proxy isn't reachable the command still runs (straight to the provider);
+usage just isn't recorded, so it never breaks your workflow.
+
+  tt run -- claude
+  tt run --provider anthropic -- claude
+  tt run -- opencode`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		providers, _ := cmd.Flags().GetStringSlice("provider")
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		listen := app.ProxyListen(cfg)
+
+		name, rest := args[0], args[1:]
+		env := os.Environ()
+		if app.ProxyHealthy(listen, 500*time.Millisecond) {
+			env = append(env, app.ProxyChildEnv(cfg, listen, providers)...)
+			fmt.Fprintf(os.Stderr, "▸ routing %s through the proxy at http://%s (usage tracked)\n", name, listen)
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠ proxy not reachable at http://%s — running %s directly; usage will NOT be tracked.\n  start it with `token-tracker` or `tt proxy`.\n", listen, name)
+		}
+
+		// Catch terminal signals so this wrapper doesn't die before the child;
+		// the child (foreground, same process group) still receives them and
+		// handles Ctrl-C itself. Notify (not Ignore) so the child resets to the
+		// default disposition across exec rather than inheriting SIG_IGN.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
+		go func() {
+			for range sigCh {
+			}
+		}()
+
+		child := exec.Command(name, rest...)
+		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+		child.Env = env
+		if err := child.Run(); err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				os.Exit(ee.ExitCode())
+			}
+			return fmt.Errorf("run %s: %w", name, err)
+		}
+		return nil
+	},
+}
+
 func init() {
 	authCmd.Flags().Bool("list", false, "List configured providers")
 	spendCmd.Flags().Bool("by-model", false, "Break spend down by model")
+	// Flags before the command; everything after the first positional is the
+	// child command line (so `tt run claude --foo` passes --foo to claude).
+	runCmd.Flags().SetInterspersed(false)
+	runCmd.Flags().StringSlice("provider", nil, "Provider base URLs to route (default: all configured); repeatable")
 	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(clearCmd)
 	rootCmd.AddCommand(spendCmd)
@@ -450,6 +513,7 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(serviceCmd)
 	rootCmd.AddCommand(proxyCmd)
+	rootCmd.AddCommand(runCmd)
 }
 
 func main() {

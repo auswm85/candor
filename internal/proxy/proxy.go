@@ -55,6 +55,14 @@ func NewProxy(upstreams map[string]string, recorder *Recorder, maxBodyBytes int6
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// Liveness probe used by `tt run` / `tt doctor` to decide whether to route a
+	// child harness through the proxy. Answered before provider routing.
+	if req.URL.Path == "/healthz" {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+		return
+	}
+
 	provider, rest := splitProvider(req.URL.Path)
 	upstream := p.upstreams[provider]
 	if upstream == "" {
@@ -120,22 +128,38 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
+	// Usage tapping is best-effort and must never break the proxied response: a
+	// bug in an extractor should cost us a metric, not the user's request. Every
+	// tap point below is isolated so forwarding continues regardless.
 	var usage *Usage
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		acc := ext.NewStream()
-		streamThrough(w, resp.Body, acc)
-		usage = acc.Usage()
+		streamThrough(w, resp.Body, acc) // forwards even if the tap panics mid-stream
+		recovering("stream usage", func() { usage = acc.Usage() })
 	} else {
 		respBody, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write(respBody)
-		usage = ext.NonStreaming(respBody)
+		recovering("non-streaming extract", func() { usage = ext.NonStreaming(respBody) })
 	}
 
 	if usage != nil && p.recorder != nil {
-		if err := p.recorder.Record(provider, *usage); err != nil {
-			log.Printf("proxy: record %s usage: %v", provider, err)
-		}
+		recovering("record usage", func() {
+			if err := p.recorder.Record(provider, *usage); err != nil {
+				log.Printf("proxy: record %s usage: %v", provider, err)
+			}
+		})
 	}
+}
+
+// recovering runs fn, turning any panic into a log line so a tapping bug can
+// never propagate into (and abort) the proxied request.
+func recovering(what string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("proxy: recovered panic in %s: %v", what, r)
+		}
+	}()
+	fn()
 }
 
 // splitProvider separates "/anthropic/v1/messages" into ("anthropic", "/v1/messages").
@@ -148,21 +172,39 @@ func splitProvider(path string) (provider, rest string) {
 }
 
 // streamThrough forwards an SSE body to the client byte-for-byte while feeding
-// each line to the accumulator so usage can be parsed as it streams.
+// each line to the accumulator so usage can be parsed as it streams. Forwarding
+// is the priority: the client always gets the bytes first, and if the tap ever
+// panics it's disabled for the rest of the stream rather than aborting it.
 func streamThrough(w http.ResponseWriter, body io.Reader, acc StreamAccumulator) {
 	flusher, _ := w.(http.Flusher)
 	br := bufio.NewReader(body)
+	tapAlive := true
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
-			_, _ = w.Write(line)
+			_, _ = w.Write(line) // forward first, unconditionally
 			if flusher != nil {
 				flusher.Flush()
 			}
-			acc.Line(line)
+			if tapAlive {
+				tapAlive = safeTap(acc, line)
+			}
 		}
 		if err != nil {
 			break
 		}
 	}
+}
+
+// safeTap feeds one line to the accumulator, returning false (so the caller
+// stops tapping) if it panics — forwarding is never affected.
+func safeTap(acc StreamAccumulator, line []byte) (alive bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("proxy: usage tap panicked, disabling for this stream: %v", r)
+			alive = false
+		}
+	}()
+	acc.Line(line)
+	return true
 }
