@@ -11,7 +11,7 @@ Local-first LLM cost tracker. A transparent local **proxy** captures live, per-r
 - **Multi-provider** — proxy handles OpenAI-compatible (OpenAI, OpenRouter) and Anthropic protocols; polling adapters cover all three. OpenRouter cost comes straight from the provider; others are priced by the engine.
 - **Local-first** — single Go binary, SQLite database. No cloud.
 - **Projected monthly spend + alerts** — extrapolates burn rate against your budget, fires an OS notification (macOS/Linux/Windows) once per threshold crossed each month.
-- **Terminal UI** — bubbletea tabbed dashboard: Live spend + proxy status, 30-day History chart, Alerts. _(Web dashboard planned.)_
+- **Terminal UI** — bubbletea tabbed dashboard: Live spend, top models, cache impact, proxy status; 30-day History chart; Alerts.
 
 ## Quick Start
 
@@ -120,7 +120,7 @@ Polling API keys are stored in your OS keychain via `go-keyring` — never in th
 
 Proxy forwards each request to the real provider and taps usage from the
 response; the poll loop pulls official usage APIs on an interval. Both cost
-their records and write to SQLite, which the TUI reads. (Web dashboard planned.)
+their records and write to SQLite, which the TUI reads.
 
 See `docs/plan.md` for the full implementation plan.
 
@@ -142,8 +142,6 @@ go test -race -count=1 ./...   # run all tests
 go vet ./...                   # static analysis
 golangci-lint run              # lint (.golangci.yml; needs v2 built with go1.26)
 ```
-
-The web dashboard (`internal/web`) is not built yet.
 
 See `CLAUDE.md` for full commands and architecture notes.
 

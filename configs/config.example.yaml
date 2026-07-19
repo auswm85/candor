@@ -1,11 +1,6 @@
 poll_interval: 5m
 database: ~/.local/share/token-tracker/tokens.db
 
-# web dashboard is planned but not built yet — these settings are inert.
-web:
-  enabled: true
-  listen: 127.0.0.1:7878
-
 tui:
   refresh: 1s
 

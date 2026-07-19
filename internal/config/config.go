@@ -10,7 +10,6 @@ import (
 type Config struct {
 	PollInterval string     `mapstructure:"poll_interval"`
 	Database     string     `mapstructure:"database"`
-	Web          WebCfg     `mapstructure:"web"`
 	TUI          TUICfg     `mapstructure:"tui"`
 	Defaults     Defaults   `mapstructure:"defaults"`
 	Providers    ProvCfg    `mapstructure:"providers"`
@@ -28,11 +27,6 @@ type ProxyCfg struct {
 	Upstreams        map[string]string `mapstructure:"upstreams"`
 	AllowNonLoopback bool              `mapstructure:"allow_nonloopback"` // bind to non-loopback addrs
 	MaxBodyBytes     int64             `mapstructure:"max_body_bytes"`    // cap proxied request body
-}
-
-type WebCfg struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Listen  string `mapstructure:"listen"`
 }
 
 type TUICfg struct {
@@ -66,8 +60,6 @@ func Load() (*Config, error) {
 
 	v.SetDefault("poll_interval", "5m")
 	v.SetDefault("database", filepath.Join(os.Getenv("HOME"), ".local", "share", "token-tracker", "tokens.db"))
-	v.SetDefault("web.enabled", true)
-	v.SetDefault("web.listen", "127.0.0.1:7878")
 	v.SetDefault("tui.refresh", "1s")
 	v.SetDefault("defaults.monthly_budget_usd", 100)
 	v.SetDefault("defaults.alert_thresholds", []int{50, 75, 90, 100})

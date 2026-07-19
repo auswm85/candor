@@ -296,6 +296,8 @@ Three primary views:
 
 ## 8. Web Dashboard
 
+> **DROPPED** (see M4). The design below is the original, unimplemented plan, kept for reference only.
+
 **Tech:** Svelte/SvelteKit built to static files, served from `internal/web/static/` via Go 1.22+ `net/http` with `embed.FS`. Single binary, no separate Node process.
 
 - Build: `npm run build` in `web/` outputs to `internal/web/static/`.
@@ -372,12 +374,14 @@ tt status                   # daemon health, last poll time, DB size
 - [x] Tabbed navigation (1/2/3, tab/arrows)
 - [ ] Snapshot tests _(has unit tests, not golden snapshots)_
 
-### M4 — Web Dashboard (4 days) — not started
+### M4 — Web Dashboard — DROPPED
 
-- [ ] Svelte/SvelteKit static build pipeline
-- [ ] JSON API endpoints
-- [ ] 3 pages mirroring TUI
-- [ ] Embedded into Go binary via `embed.FS`
+Cut in favor of the TUI. After the proxy pivot a browser dashboard is redundant —
+the TUI already covers spend, top models, cache impact, 30-day history, and
+alerts — and a SvelteKit build would add a Node toolchain for a read-only
+duplicate. `web/`, `internal/web`, the `web:` config block, and the frontend CI
+job were removed. (If a browser view is ever wanted, the cheap path is a single
+HTML page + JSON endpoint served by the proxy's existing HTTP server — no Node.)
 
 ### M5 — Polish & Release (2 days) — partial
 

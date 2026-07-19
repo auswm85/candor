@@ -44,7 +44,7 @@ Single Go binary, single process. The `token-tracker` daemon runs the TUI, and (
 - **Alert checker** — `internal/alert`: after each poll, projects monthly spend and fires an OS notification the first time each budget threshold is crossed per month (dedup via `config_state`).
 - **TUI** — `internal/tui`: bubbletea; tabbed Live / History / Alerts, refreshing from the store on a tick.
 
-Web dashboard (`internal/web`) is **planned, not built** — the directory is currently empty.
+The TUI is the only UI — an earlier plan for an embedded web dashboard was dropped.
 
 Each poll provider is a custom adapter implementing the `Provider` interface. Note the earlier "Strategy A / no proxy" framing in older docs is superseded — proxy mode is now primary (see `docs/plan.md`).
 
@@ -64,7 +64,7 @@ internal/
   app/            Shared wiring: build providers, scheduler, proxy from config
   lock/           Single-instance daemon lock (flock; no-op on non-unix)
   tui/            bubbletea tabbed views (Live / History / Alerts)
-  web/            (planned — empty)
+  pricing/        dynamic model pricing (OpenRouter catalog, cached, bundled fallback)
   config/         viper config loader + go-keyring integration
 ```
 
@@ -92,7 +92,7 @@ Test mocks: `testdata/openai_costs_*.json` for HTTP fixtures. SQLite tests use `
 
 ## Environment
 
-Go 1.26+, Node 22+ (for web dashboard build). macOS/Linux/Windows.
+Go 1.26+. macOS/Linux/Windows.
 
 ## Gotchas
 
@@ -100,4 +100,4 @@ Go 1.26+, Node 22+ (for web dashboard build). macOS/Linux/Windows.
 - **Proxy vs polling keys are different.** Proxy mode forwards whatever key the client (harness) sends and stores nothing. Polling mode stores privileged keys in the OS keychain via `tt auth` (`zalando/go-keyring`), falling back to env vars.
 - The daemon redirects its log to `<db-dir>/daemon.log` while the TUI owns the terminal — check there, not stdout, for poll/proxy errors.
 - The proxy runs by default (`proxy.enabled` defaults true) on `127.0.0.1:7879`; harnesses point their base URL at `http://127.0.0.1:7879/<provider>/…`.
-- Web dashboard is not built yet (`internal/web` is empty); don't reference it as if it exists.
+- Model pricing is dynamic (`internal/pricing`, OpenRouter catalog, cached to `<db-dir>/prices.json`), falling back to `cost.DefaultPrices()` offline.
