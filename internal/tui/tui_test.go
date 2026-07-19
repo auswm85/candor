@@ -15,6 +15,22 @@ func update(m tea.Model, msg tea.Msg) model {
 	return updated.(model)
 }
 
+func TestMoneyFine(t *testing.T) {
+	cases := map[float64]string{
+		0:            "$0.00",
+		0.65886:      "$0.66",
+		0.010076:     "$0.01",
+		0.0022983744: "$0.0023",
+		0.0003275:    "$0.0003",
+		0.00005:      "$0.000050",
+	}
+	for v, want := range cases {
+		if got := moneyFine(v); got != want {
+			t.Errorf("moneyFine(%v) = %q, want %q", v, got, want)
+		}
+	}
+}
+
 func TestDashboardRenders(t *testing.T) {
 	m := NewModel(&config.Config{})
 	view := m.View()

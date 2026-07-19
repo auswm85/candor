@@ -477,7 +477,7 @@ func (m model) renderLive(width int) string {
 			tokens := e.Input + e.Cached + e.CacheWrite + e.Output
 			fmt.Fprintf(&b, "  %s  %s  %-18s %s  %s\n",
 				dimStyle.Render(e.At.Format("15:04:05")), prov, name,
-				dimStyle.Render(fmt.Sprintf("%7s tok", fmtTokens(tokens))), money(e.CostUSD))
+				dimStyle.Render(fmt.Sprintf("%7s tok", fmtTokens(tokens))), moneyFine(e.CostUSD))
 		}
 	}
 
@@ -697,6 +697,20 @@ func (m model) burnPerHour() float64 {
 }
 
 func money(v float64) string { return fmt.Sprintf("$%.2f", v) }
+
+// moneyFine formats a cost with enough precision to be non-zero for small
+// per-request amounts (many requests cost a fraction of a cent), while keeping
+// cent precision for larger figures.
+func moneyFine(v float64) string {
+	switch {
+	case v >= 0.01 || v <= 0:
+		return fmt.Sprintf("$%.2f", v)
+	case v >= 0.0001:
+		return fmt.Sprintf("$%.4f", v)
+	default:
+		return fmt.Sprintf("$%.6f", v)
+	}
+}
 
 // fmtTokens renders a token count compactly: 1.2M, 15.3k, 420.
 func fmtTokens(n int64) string {
