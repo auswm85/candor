@@ -102,12 +102,13 @@ func (a *Adapter) get(ctx context.Context, url string, dst any) error {
 		return fmt.Errorf("read: %w", err)
 	}
 	if resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("openrouter activity requires a provisioning key — " +
+		return &provider.APIError{Provider: "openrouter", Status: resp.StatusCode, Message: "openrouter activity requires a provisioning key — " +
 			"create one at https://openrouter.ai/settings/provisioning-keys and store it with `tt auth openrouter` " +
-			"(a standard inference key cannot read account activity)")
+			"(a standard inference key cannot read account activity)"}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("openrouter %s: %s", resp.Status, string(body[:min(len(body), 300)]))
+		return &provider.APIError{Provider: "openrouter", Status: resp.StatusCode,
+			Message: fmt.Sprintf("openrouter %s: %s", resp.Status, string(body[:min(len(body), 300)]))}
 	}
 	if err := json.Unmarshal(body, dst); err != nil {
 		return fmt.Errorf("decode: %w", err)

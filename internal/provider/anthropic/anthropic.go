@@ -226,16 +226,18 @@ func (a *Adapter) get(ctx context.Context, u string, dst any) error {
 		return fmt.Errorf("read: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		if !strings.HasPrefix(a.apiKey, "sk-ant-admin") {
-			return fmt.Errorf("anthropic 401: the usage/cost API requires an Admin API key " +
-				"(sk-ant-admin01-…, available to organization accounts only), but the stored key is a standard API key. " +
-				"Create one at https://platform.claude.com/settings/admin-keys and store it with `tt auth anthropic`")
-		}
-		return fmt.Errorf("anthropic 401 — Admin key rejected (expired or revoked?): %s",
+		msg := fmt.Sprintf("anthropic 401 — Admin key rejected (expired or revoked?): %s",
 			string(body[:min(len(body), 300)]))
+		if !strings.HasPrefix(a.apiKey, "sk-ant-admin") {
+			msg = "anthropic 401: the usage/cost API requires an Admin API key " +
+				"(sk-ant-admin01-…, available to organization accounts only), but the stored key is a standard API key. " +
+				"Create one at https://platform.claude.com/settings/admin-keys and store it with `tt auth anthropic`"
+		}
+		return &provider.APIError{Provider: "anthropic", Status: resp.StatusCode, Message: msg}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("anthropic %s: %s", resp.Status, string(body[:min(len(body), 500)]))
+		return &provider.APIError{Provider: "anthropic", Status: resp.StatusCode,
+			Message: fmt.Sprintf("anthropic %s: %s", resp.Status, string(body[:min(len(body), 500)]))}
 	}
 	if err := json.Unmarshal(body, dst); err != nil {
 		return fmt.Errorf("decode: %w", err)

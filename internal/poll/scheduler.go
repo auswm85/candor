@@ -21,6 +21,7 @@ type Scheduler struct {
 	engine    *cost.Engine
 	alerter   *alert.Checker
 	interval  time.Duration
+	state     *stateStore
 }
 
 func New(providers []provider.Provider, s *store.Store, engine *cost.Engine, alerter *alert.Checker, interval time.Duration) *Scheduler {
@@ -30,6 +31,7 @@ func New(providers []provider.Provider, s *store.Store, engine *cost.Engine, ale
 		engine:    engine,
 		alerter:   alerter,
 		interval:  interval,
+		state:     newStateStore(),
 	}
 }
 
@@ -52,12 +54,23 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func (s *Scheduler) pollAll(ctx context.Context) {
 	since := time.Now().Add(-lookback)
+	now := time.Now()
 	for _, p := range s.providers {
-		records, err := p.PollUsage(ctx, since)
-		if err != nil {
-			log.Printf("poll %s: %v", p.Name(), err)
+		// Skip permanently-failed (auth) providers and those in a backoff window
+		// — silently, so a bad key doesn't spam the log every cycle.
+		if s.state.shouldSkip(p.Name(), now) {
 			continue
 		}
+		records, err := p.PollUsage(ctx, since)
+		if err != nil {
+			if s.state.recordFailure(p.Name(), err, now) {
+				log.Printf("poll %s: %v (won't retry until restart / re-auth)", p.Name(), err)
+			} else {
+				log.Printf("poll %s: %v (backing off)", p.Name(), err)
+			}
+			continue
+		}
+		s.state.recordSuccess(p.Name())
 		stored, err := s.persist(records)
 		if err != nil {
 			log.Printf("persist %s: %v", p.Name(), err)

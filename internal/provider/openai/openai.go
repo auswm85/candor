@@ -145,12 +145,13 @@ func (a *Adapter) get(ctx context.Context, u string, dst any) error {
 		return fmt.Errorf("read: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("openai 401: the costs API requires an Admin key " +
+		return &provider.APIError{Provider: "openai", Status: resp.StatusCode, Message: "openai 401: the costs API requires an Admin key " +
 			"(create one at https://platform.openai.com/settings/organization/admin-keys and store it with `tt auth openai`); " +
-			"a standard project/inference key cannot read organization costs")
+			"a standard project/inference key cannot read organization costs"}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("openai %s: %s", resp.Status, string(body[:min(len(body), 300)]))
+		return &provider.APIError{Provider: "openai", Status: resp.StatusCode,
+			Message: fmt.Sprintf("openai %s: %s", resp.Status, string(body[:min(len(body), 300)]))}
 	}
 	if err := json.Unmarshal(body, dst); err != nil {
 		return fmt.Errorf("decode: %w", err)
