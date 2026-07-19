@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Proxy is a transparent reverse proxy. The first path segment selects the
@@ -23,7 +25,21 @@ func NewProxy(upstreams map[string]string, recorder *Recorder) *Proxy {
 	return &Proxy{
 		upstreams: upstreams,
 		recorder:  recorder,
-		client:    &http.Client{}, // no timeout: streamed responses can be long
+		// No Client.Timeout — it would cut off long streamed responses. A hung
+		// upstream is bounded instead by connect/TLS/response-header timeouts
+		// (which don't limit the streaming body) plus the request context, which
+		// cancels when the client disconnects.
+		client: &http.Client{
+			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 60 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+			},
+		},
 	}
 }
 

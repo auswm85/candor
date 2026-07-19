@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -16,9 +18,24 @@ import (
 	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/lock"
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
+
+// readSecret reads a secret without echoing it when stdin is a terminal, and
+// falls back to a plain line read when input is piped (scripts, tests).
+func readSecret(reader *bufio.Reader) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		b, err := term.ReadPassword(fd)
+		fmt.Println() // ReadPassword swallows the newline
+		return strings.TrimSpace(string(b)), err
+	}
+	line, err := reader.ReadString('\n')
+	return strings.TrimSpace(line), err
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "tt",
@@ -72,11 +89,10 @@ Examples:
 				}
 			}
 			fmt.Printf("Enter %s API key: ", p)
-			key, err := reader.ReadString('\n')
+			key, err := readSecret(reader)
 			if err != nil {
 				return fmt.Errorf("read input: %w", err)
 			}
-			key = strings.TrimSpace(key)
 			if key == "" {
 				fmt.Printf("  Skipping %s (empty key).\n", p)
 				continue
@@ -221,6 +237,15 @@ var daemonCmd = &cobra.Command{
 		if err := st.Migrate(); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+
+		lk, err := lock.Acquire(filepath.Join(filepath.Dir(cfg.Database), "daemon.lock"))
+		if err != nil {
+			if errors.Is(err, lock.ErrLocked) {
+				return fmt.Errorf("another token-tracker daemon is already running")
+			}
+			return fmt.Errorf("acquire lock: %w", err)
+		}
+		defer func() { _ = lk.Release() }()
 
 		scheduler := app.NewScheduler(cfg, st)
 		if scheduler == nil {
@@ -378,7 +403,7 @@ Your normal inference key is forwarded untouched — no admin key needed.`,
 
 		upstreams := app.ProxyUpstreams(cfg)
 		listen := app.ProxyListen(cfg)
-		srv := &http.Server{Addr: listen, Handler: app.BuildProxy(cfg, st)}
+		srv := &http.Server{Addr: listen, Handler: app.BuildProxy(cfg, st), ReadHeaderTimeout: 10 * time.Second}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

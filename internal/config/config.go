@@ -67,7 +67,7 @@ func Load() (*Config, error) {
 	v.SetDefault("providers.openai.enabled", true)
 	v.SetDefault("providers.anthropic.enabled", true)
 	v.SetDefault("providers.openrouter.enabled", true)
-	v.SetDefault("proxy.enabled", false)
+	v.SetDefault("proxy.enabled", true)
 	v.SetDefault("proxy.listen", "127.0.0.1:7879")
 	v.SetDefault("proxy.upstreams", map[string]string{
 		"openai":     "https://api.openai.com",

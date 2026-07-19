@@ -50,9 +50,9 @@ func TestDashboardTabs(t *testing.T) {
 		},
 	}
 
-	// Live tab (default) shows spend.
-	if v := m.View(); !strings.Contains(v, "Month:") || !strings.Contains(v, "Projected:") {
-		t.Errorf("live tab missing spend, got: %s", v)
+	// Live tab (default) shows spend and proxy sections.
+	if v := m.View(); !strings.Contains(v, "Month") || !strings.Contains(v, "Projected") || !strings.Contains(v, "Proxy") {
+		t.Errorf("live tab missing spend/proxy, got: %s", v)
 	}
 
 	// Switch to History.

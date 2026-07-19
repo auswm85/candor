@@ -12,7 +12,7 @@ tui:
 # http://127.0.0.1:7879/<provider>/... to record live per-request usage.
 # Your normal inference key is forwarded untouched (no admin key needed).
 proxy:
-  enabled: false
+  enabled: true # the daemon runs the proxy alongside the TUI; set false to disable
   listen: 127.0.0.1:7879
   upstreams:
     openai: https://api.openai.com

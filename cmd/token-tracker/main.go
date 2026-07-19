@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/auswm85/token-tracker/internal/alert"
 	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/lock"
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/auswm85/token-tracker/internal/tui"
 )
@@ -30,6 +33,17 @@ func main() {
 	if err := st.Migrate(); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+
+	// Single-instance: prevent a second daemon from double-polling / fighting
+	// for the proxy port.
+	lk, err := lock.Acquire(filepath.Join(filepath.Dir(cfg.Database), "daemon.lock"))
+	if err != nil {
+		if errors.Is(err, lock.ErrLocked) {
+			log.Fatal("another token-tracker daemon is already running")
+		}
+		log.Fatalf("acquire lock: %v", err)
+	}
+	defer func() { _ = lk.Release() }()
 
 	// The bubbletea TUI owns the terminal, so redirect log output to a file
 	// next to the database instead of letting it corrupt the screen.
@@ -52,7 +66,7 @@ func main() {
 
 	// Start the live-usage proxy alongside the TUI when enabled.
 	if cfg.Proxy.Enabled {
-		proxySrv := &http.Server{Addr: app.ProxyListen(cfg), Handler: app.BuildProxy(cfg, st)}
+		proxySrv := &http.Server{Addr: app.ProxyListen(cfg), Handler: app.BuildProxy(cfg, st), ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			log.Printf("proxy listening on http://%s", proxySrv.Addr)
 			if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

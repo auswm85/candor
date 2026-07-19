@@ -3,11 +3,13 @@ package tui
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/auswm85/token-tracker/internal/alert"
+	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
 	"github.com/auswm85/token-tracker/internal/store"
@@ -445,25 +447,43 @@ func (m model) tabBar() string {
 
 func (m model) renderLive() string {
 	var b strings.Builder
+
+	// --- Spend ---
+	b.WriteString("Spend\n")
+	fmt.Fprintf(&b, "  Today      $%.2f\n", m.today)
 	budget := m.cfg.Defaults.MonthlyBudgetUSD
 	if budget > 0 {
 		pct := m.month / budget * 100
 		flag := ""
 		if pct >= 90 {
-			flag = " ⚠"
+			flag = "  ⚠"
 		}
-		fmt.Fprintf(&b, "Today:      $%.2f\n", m.today)
-		fmt.Fprintf(&b, "Month:      $%.2f / $%.0f budget  %s%s\n",
-			m.month, budget, progressBar(pct), flag)
-		fmt.Fprintf(&b, "Projected:  $%.2f (end of month)\n", m.projected)
+		fmt.Fprintf(&b, "  Month      $%.2f / $%.0f   %s%s\n", m.month, budget, progressBar(pct), flag)
 	} else {
-		fmt.Fprintf(&b, "Today:      $%.2f\n", m.today)
-		fmt.Fprintf(&b, "Month:      $%.2f\n", m.month)
-		fmt.Fprintf(&b, "Projected:  $%.2f (end of month)\n", m.projected)
+		fmt.Fprintf(&b, "  Month      $%.2f\n", m.month)
 	}
+	fmt.Fprintf(&b, "  Projected  $%.2f  (at current rate)\n", m.projected)
 
-	fmt.Fprintf(&b, "\nConfigured providers: %s\n",
-		strings.Join(auth.ListConfiguredProviders(), ", "))
+	// --- Proxy ---
+	listen := app.ProxyListen(m.cfg)
+	b.WriteString("\nProxy\n")
+	if m.cfg.Proxy.Enabled {
+		fmt.Fprintf(&b, "  ✓ listening on %s\n", listen)
+	} else {
+		b.WriteString("  ✗ off — run `tt proxy`, or set proxy.enabled: true\n")
+	}
+	provs := make([]string, 0)
+	for name := range app.ProxyUpstreams(m.cfg) {
+		provs = append(provs, name)
+	}
+	sort.Strings(provs)
+	fmt.Fprintf(&b, "  point a tool's base URL at  http://%s/<provider>/…\n", listen)
+	fmt.Fprintf(&b, "  providers: %s\n", strings.Join(provs, " · "))
+
+	// --- Empty state ---
+	if m.today == 0 && m.month == 0 && len(m.daily) == 0 {
+		b.WriteString("\nNo usage recorded yet — run a tool through the proxy and spend appears here.\n")
+	}
 	return b.String()
 }
 
