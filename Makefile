@@ -1,17 +1,11 @@
-.PHONY: all build build-daemon build-cli test vet lint tidy clean migrate web-build web-dev dev
+.PHONY: all build test vet lint tidy clean migrate dev
 
-BINARY_DAEMON = candor
-BINARY_CLI    = tt
+BINARY = candor
 
 all: build
 
-build: build-daemon build-cli
-
-build-daemon:
-	go build -o dist/$(BINARY_DAEMON) ./cmd/candor
-
-build-cli:
-	go build -o dist/$(BINARY_CLI) ./cmd/tt
+build:
+	go build -o dist/$(BINARY) ./cmd/candor
 
 test:
 	go test -race -count=1 ./...
@@ -29,13 +23,7 @@ clean:
 	rm -rf dist/
 
 migrate:
-	go run ./cmd/tt migrate
+	go run ./cmd/candor migrate
 
-web-build:
-	cd web && npm ci && npm run build
-
-web-dev:
-	cd web && npm run dev
-
-dev: build-cli
-	./dist/$(BINARY_CLI) daemon
+dev: build
+	./dist/$(BINARY)

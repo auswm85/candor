@@ -8,13 +8,11 @@ import (
 )
 
 type Config struct {
-	PollInterval string     `mapstructure:"poll_interval"`
-	Database     string     `mapstructure:"database"`
-	TUI          TUICfg     `mapstructure:"tui"`
-	Defaults     Defaults   `mapstructure:"defaults"`
-	Providers    ProvCfg    `mapstructure:"providers"`
-	Proxy        ProxyCfg   `mapstructure:"proxy"`
-	Pricing      PricingCfg `mapstructure:"pricing"`
+	Database string     `mapstructure:"database"`
+	TUI      TUICfg     `mapstructure:"tui"`
+	Defaults Defaults   `mapstructure:"defaults"`
+	Proxy    ProxyCfg   `mapstructure:"proxy"`
+	Pricing  PricingCfg `mapstructure:"pricing"`
 }
 
 type PricingCfg struct {
@@ -38,17 +36,6 @@ type Defaults struct {
 	AlertThresholds  []int   `mapstructure:"alert_thresholds"`
 }
 
-type ProvCfg struct {
-	OpenAI     ProviderEntry `mapstructure:"openai"`
-	Anthropic  ProviderEntry `mapstructure:"anthropic"`
-	OpenRouter ProviderEntry `mapstructure:"openrouter"`
-}
-
-type ProviderEntry struct {
-	Enabled    bool   `mapstructure:"enabled"`
-	KeyringKey string `mapstructure:"keyring_key"`
-}
-
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -58,14 +45,10 @@ func Load() (*Config, error) {
 	v.AddConfigPath(configDir)
 	v.AddConfigPath(".")
 
-	v.SetDefault("poll_interval", "5m")
 	v.SetDefault("database", filepath.Join(os.Getenv("HOME"), ".local", "share", "candor", "tokens.db"))
 	v.SetDefault("tui.refresh", "1s")
 	v.SetDefault("defaults.monthly_budget_usd", 100)
 	v.SetDefault("defaults.alert_thresholds", []int{50, 75, 90, 100})
-	v.SetDefault("providers.openai.enabled", true)
-	v.SetDefault("providers.anthropic.enabled", true)
-	v.SetDefault("providers.openrouter.enabled", true)
 	v.SetDefault("proxy.enabled", true)
 	v.SetDefault("proxy.listen", "127.0.0.1:7879")
 	v.SetDefault("proxy.allow_nonloopback", false)

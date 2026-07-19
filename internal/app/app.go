@@ -1,8 +1,9 @@
-// Package app holds wiring shared by the daemon and CLI: constructing provider
-// adapters from configured keys and assembling the poll scheduler.
+// Package app holds wiring shared by the daemon and CLI: assembling the proxy,
+// cost engine, and budget-alert loop from config.
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -12,15 +13,9 @@ import (
 	"time"
 
 	"github.com/auswm85/candor/internal/alert"
-	"github.com/auswm85/candor/internal/auth"
 	"github.com/auswm85/candor/internal/config"
 	"github.com/auswm85/candor/internal/cost"
-	"github.com/auswm85/candor/internal/poll"
 	"github.com/auswm85/candor/internal/pricing"
-	"github.com/auswm85/candor/internal/provider"
-	"github.com/auswm85/candor/internal/provider/anthropic"
-	"github.com/auswm85/candor/internal/provider/openai"
-	"github.com/auswm85/candor/internal/provider/openrouter"
 	"github.com/auswm85/candor/internal/proxy"
 	"github.com/auswm85/candor/internal/store"
 )
@@ -69,8 +64,7 @@ func ValidateProxyListen(addr string, allowNonLoopback bool) error {
 }
 
 // priceTable loads model pricing dynamically (cached next to the DB), falling
-// back to bundled defaults. Called once per engine; the on-disk cache dedupes
-// the fetch across the proxy + poll engines within a single daemon start.
+// back to bundled defaults.
 func priceTable(cfg *config.Config) cost.Prices {
 	return pricing.Load(filepath.Dir(cfg.Database), cfg.Pricing.Source)
 }
@@ -134,8 +128,7 @@ func ProxyChildEnv(cfg *config.Config, listen string, providers []string) []stri
 }
 
 // ProxyHealthy reports whether a proxy is answering on listen within timeout,
-// via its /healthz endpoint. Used by `tt run` to decide whether to route a child
-// through the proxy or let it go straight to the provider.
+// via its /healthz endpoint.
 func ProxyHealthy(listen string, timeout time.Duration) bool {
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get("http://" + listen + "/healthz")
@@ -146,45 +139,45 @@ func ProxyHealthy(listen string, timeout time.Duration) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// BuildProviders constructs an adapter for each enabled provider that has a
-// stored API key.
-func BuildProviders(cfg *config.Config) []provider.Provider {
-	var providers []provider.Provider
-	add := func(name string, entry config.ProviderEntry, make func(key string) provider.Provider) {
-		if !entry.Enabled {
-			return
-		}
-		key, err := auth.GetProviderKey(name)
-		if err != nil || key == "" {
-			return
-		}
-		providers = append(providers, make(key))
+// ProjectMonth extrapolates month-to-date spend to a full-month projection at
+// the current burn rate.
+func ProjectMonth(st *store.Store, now time.Time) (float64, error) {
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	month, err := st.TotalCostSince(start)
+	if err != nil {
+		return 0, err
 	}
-	add("openai", cfg.Providers.OpenAI, func(k string) provider.Provider { return openai.New(k) })
-	add("anthropic", cfg.Providers.Anthropic, func(k string) provider.Provider { return anthropic.New(k) })
-	add("openrouter", cfg.Providers.OpenRouter, func(k string) provider.Provider { return openrouter.New(k) })
-	return providers
+	days := now.Sub(start).Hours() / 24
+	if days < 1 {
+		days = 1
+	}
+	return month / days * 30, nil
 }
 
-// NewScheduler assembles a poll scheduler from configured providers. It returns
-// nil (no error) when no providers are configured, so callers can decide how to
-// handle that case.
-func NewScheduler(cfg *config.Config, st *store.Store) *poll.Scheduler {
-	providers := BuildProviders(cfg)
-	if len(providers) == 0 {
-		return nil
+// StartAlertLoop periodically projects monthly spend and fires budget-threshold
+// notifications — the timer-based replacement for the old poll-driven checker.
+// No-op when no budget/thresholds are configured. Runs until ctx is cancelled.
+func StartAlertLoop(ctx context.Context, cfg *config.Config, st *store.Store, interval time.Duration) {
+	if cfg.Defaults.MonthlyBudgetUSD <= 0 || len(cfg.Defaults.AlertThresholds) == 0 {
+		return
 	}
-	engine := cost.New(priceTable(cfg))
-	alerter := alert.New(cfg, st)
-	return poll.New(providers, st, engine, alerter, ParseInterval(cfg.PollInterval, 5*time.Minute))
-}
-
-// ParseInterval parses a Go duration string, falling back on any parse error or
-// non-positive value.
-func ParseInterval(s string, fallback time.Duration) time.Duration {
-	d, err := time.ParseDuration(s)
-	if err != nil || d <= 0 {
-		return fallback
+	checker := alert.New(cfg, st)
+	check := func() {
+		if p, err := ProjectMonth(st, time.Now()); err == nil {
+			_, _ = checker.Check(p)
+		}
 	}
-	return d
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		check()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				check()
+			}
+		}
+	}()
 }

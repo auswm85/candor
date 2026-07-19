@@ -1,15 +1,14 @@
-poll_interval: 5m
 database: ~/.local/share/candor/tokens.db
 
 tui:
   refresh: 1s
 
-# Proxy mode (primary): the daemon runs this by default. Point a coding harness's
-# base URL at http://127.0.0.1:7879/<provider>/... to record live per-request
-# usage. Your normal inference key is forwarded untouched (no admin key needed).
-# Add upstreams for local OpenAI-compatible servers (e.g. ollama: http://localhost:11434).
+# The proxy is candor's ingestion path. Point a coding harness's base URL at
+# http://127.0.0.1:7879/<provider>/... to record live per-request usage — your
+# normal inference key is forwarded untouched (no admin key needed). Add
+# upstreams for local OpenAI-compatible servers (e.g. ollama: http://localhost:11434).
 proxy:
-  enabled: true # the daemon runs the proxy alongside the TUI; set false to disable
+  enabled: true # `candor` hosts the proxy alongside the dashboard; set false to disable
   listen: 127.0.0.1:7879
   allow_nonloopback: false # refuse to bind a non-loopback address unless true (proxy forwards your keys)
   max_body_bytes: 16777216 # 16 MiB cap on proxied request bodies; oversized requests get 413
@@ -22,22 +21,11 @@ defaults:
   monthly_budget_usd: 100
   alert_thresholds: [50, 75, 90, 100]
 
-providers:
-  openai:
-    enabled: true
-    keyring_key: candor/openai-api-key
-  anthropic:
-    enabled: true
-    keyring_key: candor/anthropic-admin-key # Requires an Admin API key (sk-ant-admin01-...)
-  openrouter:
-    enabled: true
-    keyring_key: candor/openrouter-api-key
-
 # Pricing is fetched dynamically from OpenRouter's public model catalog (no auth)
-# on daemon start, cached to <db-dir>/prices.json, and refreshed daily. If the
-# fetch fails, a bundled price table is used — so it always works offline. No
-# manual price tracking. Set source to "" to disable dynamic pricing (bundled
-# defaults only), or point it at a mirror.
-# (OpenRouter-proxied traffic doesn't need this — its cost comes from the response.)
+# on start, cached to <db-dir>/prices.json, and refreshed daily. If the fetch
+# fails, a bundled price table is used — so it always works offline. Set source
+# to "" to disable dynamic pricing (bundled defaults only), or point it at a
+# mirror. (OpenRouter-proxied traffic doesn't need this — cost comes from the
+# response.)
 pricing:
   source: https://openrouter.ai/api/v1/models

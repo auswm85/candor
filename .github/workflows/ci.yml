@@ -22,4 +22,3 @@ jobs:
           version: v2.12
       - run: go test -race -count=1 ./...
       - run: go build ./cmd/candor
-      - run: go build ./cmd/tt

@@ -3,20 +3,16 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/auswm85/candor/internal/alert"
 	"github.com/auswm85/candor/internal/app"
-	"github.com/auswm85/candor/internal/auth"
 	"github.com/auswm85/candor/internal/config"
 	"github.com/auswm85/candor/internal/cost"
 	"github.com/auswm85/candor/internal/proxy"
 	"github.com/auswm85/candor/internal/store"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -61,24 +57,6 @@ func providerTag(name string) string {
 	return lipgloss.NewStyle().Foreground(color).Render(name)
 }
 
-var providers = []string{"openai", "anthropic", "openrouter"}
-
-type state int
-
-const (
-	stateOnboarding state = iota
-	stateDashboard
-)
-
-type step int
-
-const (
-	stepWelcome step = iota
-	stepPickProvider
-	stepInputKey
-	stepDone
-)
-
 type tab int
 
 const (
@@ -89,13 +67,10 @@ const (
 
 type model struct {
 	cfg      *config.Config
-	alerter  *alert.Checker
 	store    *store.Store
 	engine   *cost.Engine
 	recorder *proxy.Recorder // in-process live data (all-in-one mode)
 	statsURL string          // remote proxy /stats (viewer mode); used when recorder is nil
-	state    state
-	step     step
 
 	// terminal size (from tea.WindowSizeMsg)
 	width  int
@@ -121,26 +96,10 @@ type model struct {
 	sessCost  float64
 	sessStart time.Time
 	updatedAt time.Time
-
-	// onboarding state
-	pickIndex  int
-	input      textinput.Model
-	inputErr   string
-	configured []string
-	skipped    []string
 }
 
 func NewModel(cfg *config.Config) model {
-	m := model{cfg: cfg}
-
-	if len(auth.ListConfiguredProviders()) == 0 {
-		m.state = stateOnboarding
-		m.step = stepWelcome
-	} else {
-		m.state = stateDashboard
-	}
-
-	return m
+	return model{cfg: cfg}
 }
 
 // WithStore attaches a store so the dashboard can display recorded spend.
@@ -163,15 +122,14 @@ func (m model) WithRecorder(r *proxy.Recorder) model {
 }
 
 // WithStatsURL points the dashboard at a running proxy's /stats endpoint for
-// live data — used by the detached viewer (`tt tui`) when there's no in-process
-// recorder.
+// live data — used by the detached viewer (`candor tui`) when there's no
+// in-process recorder.
 func (m model) WithStatsURL(url string) model {
 	m.statsURL = url
 	return m
 }
 
-func NewProgram(m model, alerter *alert.Checker) *tea.Program {
-	m.alerter = alerter
+func NewProgram(m model) *tea.Program {
 	// Alt-screen: take over the terminal (clears prior scrollback on boot,
 	// restores it on exit) like Claude Code / OpenCode.
 	return tea.NewProgram(m, tea.WithAltScreen())
@@ -304,7 +262,7 @@ func tick() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	if m.state == stateDashboard && m.store != nil {
+	if m.store != nil {
 		return tea.Batch(m.loadSpend, tick())
 	}
 	return nil
@@ -313,142 +271,11 @@ func (m model) Init() tea.Cmd {
 // --- Update ---
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Track terminal size for every state so the dashboard has it immediately
-	// after onboarding, without waiting for the next resize.
 	if ws, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = ws.Width
 		m.height = ws.Height
 	}
-	switch m.state {
-	case stateOnboarding:
-		return m.updateOnboarding(msg)
-	case stateDashboard:
-		return m.updateDashboard(msg)
-	}
-	return m, nil
-}
-
-func (m model) updateOnboarding(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch m.step {
-	case stepWelcome:
-		return m.updateWelcome(msg)
-	case stepPickProvider:
-		return m.updatePickProvider(msg)
-	case stepInputKey:
-		return m.updateInputKey(msg)
-	case stepDone:
-		return m.updateDone(msg)
-	}
-	return m, nil
-}
-
-func (m model) updateWelcome(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
-			m.step = stepPickProvider
-			m.pickIndex = 0
-			return m, nil
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-func (m model) updatePickProvider(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "j", "down":
-			if m.pickIndex < len(providers)-1 {
-				m.pickIndex++
-			}
-		case "k", "up":
-			if m.pickIndex > 0 {
-				m.pickIndex--
-			}
-		case "y":
-			// configure this provider
-			ti := textinput.New()
-			ti.Placeholder = fmt.Sprintf("%s API key", providers[m.pickIndex])
-			ti.EchoMode = textinput.EchoPassword
-			ti.Focus()
-			m.input = ti
-			m.inputErr = ""
-			m.step = stepInputKey
-		case "n":
-			m.skipped = append(m.skipped, providers[m.pickIndex])
-			if m.pickIndex < len(providers)-1 {
-				m.pickIndex++
-			} else {
-				m.step = stepDone
-			}
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-func (m model) updateInputKey(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
-			key := strings.TrimSpace(m.input.Value())
-			if key == "" {
-				m.inputErr = "key cannot be empty"
-				return m, nil
-			}
-			provider := providers[m.pickIndex]
-			if err := auth.SetProviderKey(provider, key); err != nil {
-				m.inputErr = fmt.Sprintf("failed to store key: %v", err)
-				return m, nil
-			}
-			m.configured = append(m.configured, provider)
-			m.input.Reset()
-			m.inputErr = ""
-			if m.pickIndex < len(providers)-1 {
-				m.pickIndex++
-				m.step = stepPickProvider
-			} else {
-				m.step = stepDone
-			}
-		case "esc":
-			// go back to provider picker
-			m.input.Reset()
-			m.inputErr = ""
-			m.step = stepPickProvider
-		default:
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
-		}
-	default:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
-	}
-	return m, nil
-}
-
-func (m model) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
-			m.state = stateDashboard
-			log.Printf("onboarding complete: configured=%v skipped=%v", m.configured, m.skipped)
-			if m.store != nil {
-				return m, tea.Batch(m.loadSpend, tick())
-			}
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		}
-	}
-	return m, nil
+	return m.updateDashboard(msg)
 }
 
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -504,90 +331,7 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 // --- View ---
 
 func (m model) View() string {
-	switch m.state {
-	case stateOnboarding:
-		return m.viewOnboarding()
-	case stateDashboard:
-		return m.viewDashboard()
-	}
-	return ""
-}
-
-func (m model) viewOnboarding() string {
-	switch m.step {
-	case stepWelcome:
-		return m.viewWelcome()
-	case stepPickProvider:
-		return m.viewPickProvider()
-	case stepInputKey:
-		return m.viewInputKey()
-	case stepDone:
-		return m.viewDone()
-	}
-	return ""
-}
-
-func (m model) viewWelcome() string {
-	var b strings.Builder
-	b.WriteString("╔══════════════════════════════════════════╗\n")
-	b.WriteString("║                  candor                  ║\n")
-	b.WriteString("║     Local-first LLM cost monitoring      ║\n")
-	b.WriteString("╚══════════════════════════════════════════╝\n\n")
-	b.WriteString("candor polls your LLM provider usage APIs\n")
-	b.WriteString("and shows your spend in a live dashboard.\n\n")
-	b.WriteString("No keys configured yet.\n")
-	b.WriteString("Press Enter to set up your providers.\n")
-	b.WriteString("Press q to quit.\n")
-	return b.String()
-}
-
-func (m model) viewPickProvider() string {
-	var b strings.Builder
-	b.WriteString("Set up providers\n\n")
-	for i, p := range providers {
-		prefix := "  "
-		if i == m.pickIndex {
-			prefix = "> "
-		}
-		status := ""
-		if auth.HasProviderKey(p) {
-			status = " [already configured]"
-		}
-		fmt.Fprintf(&b, "%s%s%s\n", prefix, p, status)
-	}
-	b.WriteString("\n[Y]es  [N]o  [↑/↓] navigate  [q] quit\n")
-	return b.String()
-}
-
-func (m model) viewInputKey() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Enter your %s API key:\n\n", providers[m.pickIndex])
-	fmt.Fprintf(&b, "  %s\n", m.input.View())
-	if m.inputErr != "" {
-		fmt.Fprintf(&b, "\n  ⚠ %s\n", m.inputErr)
-	}
-	b.WriteString("\n[Enter] confirm  [Esc] back  [q] quit\n")
-	return b.String()
-}
-
-func (m model) viewDone() string {
-	var b strings.Builder
-	b.WriteString("Onboarding complete!\n\n")
-	if len(m.configured) > 0 {
-		b.WriteString("Configured:\n")
-		for _, p := range m.configured {
-			fmt.Fprintf(&b, "  ✓ %s\n", p)
-		}
-	}
-	if len(m.skipped) > 0 {
-		b.WriteString("Skipped:\n")
-		for _, p := range m.skipped {
-			fmt.Fprintf(&b, "  ✗ %s\n", p)
-		}
-	}
-	b.WriteString("\nPress Enter to start the dashboard.\n")
-	b.WriteString("Press q to quit.\n")
-	return b.String()
+	return m.viewDashboard()
 }
 
 func (m model) viewDashboard() string {

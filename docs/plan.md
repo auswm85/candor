@@ -1,435 +1,211 @@
-# candor — Implementation Plan
+# candor — Design & Roadmap
 
-> **⚠️ Superseded in parts.** This is the original polling-first plan. During
-> implementation the project pivoted: **proxy mode is now the primary ingestion
-> path** (polling is secondary) — see [Direction change](#direction-change-2026-07-18-proxy-mode-promoted-to-primary)
-> and the milestone checklists for what actually shipped. Some prose below still
-> reflects the initial design (Strategy A, sqlc, an embedded web dashboard);
-> where it conflicts with the milestones or `CLAUDE.md`, the latter win. A few
-> outright factual errors are corrected inline.
+Living design doc for candor. Reflects the current architecture and where it's
+headed. For day-to-day commands and conventions see `CLAUDE.md`; for user-facing
+usage see `README.md`.
 
-## 1. Project Overview
+## 1. What candor is
 
-**What it does:** A long-running local daemon that polls LLM provider usage endpoints every N minutes, applies cache-aware cost rules from a YAML config, projects monthly burn, and surfaces it via a bubbletea TUI + an embedded web dashboard.
+A local-first tool that records **live, per-request LLM spend** by sitting in
+front of a coding harness (Claude Code, OpenCode, …) as a **transparent
+reverse proxy**. It prices each request with a cache-aware cost engine, tracks
+provider rate-limit windows, projects monthly spend, fires budget alerts, and
+surfaces everything in a full-screen terminal dashboard.
 
-**Stack:** Go (single binary), SQLite (modernc.org/sqlite — pure-Go, no CGO), bubbletea (TUI), Svelte/SvelteKit static (embedded web UI).
+**Principles:**
 
-**Local-first:** All data and API keys stay on the machine. Keys stored in OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret). No cloud dependency.
+- **Local-only.** No cloud, no telemetry, no account. Single Go binary + SQLite.
+- **No privileged keys.** The proxy forwards the harness's own inference key and
+  stores nothing. There are no admin/management keys to configure.
+- **Never break the request.** Usage tapping is fail-open and runs after the
+  client's bytes are forwarded; a parser bug costs a metric, not a response.
+- **First-party fidelity.** Anthropic request bodies are forwarded byte-for-byte
+  so prompt caching (and first-party classification) is preserved.
 
-**Differentiation vs existing tools:**
+**How it differs from the field:** the crowded tools are _log parsers_
+(ccusage, tokscale, codeburn) that read harness session files after the fact,
+and _heavyweight gateways_ (LiteLLM, Helicone, Portkey) that need a server + DB +
+account. candor occupies the gap: a lightweight, local, single-binary,
+transparent-proxy tap with correct cache-tier pricing — live and per-request,
+with no infra.
 
-- _Helicone/Langfuse/Portkey_ — cloud-hosted, require routing traffic through their gateway. candor reads usage directly from provider billing APIs, never intercepts your traffic.
-- _OpenAI's own dashboard_ — slow, web-only, no cost projection, no cache-read vs cache-write breakdown by project.
-- _Vercel AI Gateway_ — couples to their gateway. candor is provider-agnostic.
-- **Cache-aware cost model** is the killer feature: the July 2026 OpenAI cache-write pricing change punishes task-oriented workloads, and no existing tool surfaces cache-read vs cache-write costs separately.
+## 2. Architecture
 
-## 2. v1 Scope
-
-### Supported providers (Strategy A — poll official billing APIs only)
-
-- **OpenAI** — `GET /v1/organization/costs?start_time=...&end_time=...&group_by[]=model&group_by[]=line_item`
-- **Anthropic** — `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/cost_report` (requires Admin API key — `sk-ant-admin01-...`)
-- **OpenRouter** — `GET /api/v1/activity` (corrected from `/api/v1/usage`; needs a provisioning key)
-
-### Explicitly NOT in v1
-
-- Local/self-hosted OpenAI-compatible providers (Ollama, vLLM, LM Studio, LocalAI, llama.cpp server) — no billing API to poll; would require proxy mode, deferred to v1.1
-- Cloud providers without dedicated usage APIs (some Groq tiers, Anyscale, Fireworks)
-- Bedrock / Vertex AI (different auth model, deferred)
-
-## 3. Project Structure
+Single Go binary, single process. Bare `candor` runs the TUI and (guarded by
+config) hosts the proxy, plus a timer-based budget-alert loop. A `daemon.lock`
+(flock) enforces one dashboard instance. If a proxy is already running (e.g. a
+background `candor proxy` service), the dashboard attaches to it as a viewer over
+`/stats` instead of binding a second one.
 
 ```
-candor/
-├── go.mod                         # module: github.com/auswm85/candor
-├── CLAUDE.md                      # conventions, commands, architecture
-├── README.md
-├── Makefile                       # build/test/run/lint targets
-├── .github/workflows/
-│   ├── ci.yml                     # go test + lint + build on push
-│   └── release.yml                # goreleaser on tag
-├── cmd/
-│   ├── candor/             # main daemon entrypoint
-│   │   └── main.go
-│   └── tt/                        # short-form CLI for one-shot queries
-│       └── main.go
-├── internal/
-│   ├── poll/                      # scheduler
-│   ├── provider/
-│   │   ├── openai/                # /v1/organization/costs
-│   │   ├── anthropic/             # /v1/organizations/usage_report/messages + /claude_code
-│   │   └── openrouter/            # /api/v1/activity
-│   ├── cost/                      # cost rules engine (YAML-driven)
-│   ├── store/                     # SQLite (hand-written; embedded migrations, no sqlc)
-│   ├── alert/                     # threshold checker + notifiers
-│   ├── tui/                       # bubbletea views
-│   ├── web/                       # net/http server + embedded static
-│   └── config/                    # viper, keyring integration
-├── pkg/                           # reserved for future public API
-├── web/                           # Svelte/SvelteKit source
-│   ├── package.json
-│   └── src/
-├── configs/
-│   └── config.example.yaml
-└── db/migrations/
+  harness (Claude Code / OpenCode)
+        │ base_url (via `candor run` or ANTHROPIC_BASE_URL)
+        ▼
+┌───────────────────────────────────────────────┐
+│  candor                                        │
+│  ┌──────────────┐        ┌─────────────┐       │
+│  │    proxy     │───────>│ cost engine │       │
+│  │ (per request)│        └──────┬──────┘       │
+│  └──────┬───────┘               ▼              │
+│         │              ┌─────────────────┐     │
+│         └─────────────>│ recorder + store│     │
+│                        └────────┬────────┘     │
+│    alert loop (budget) ─────────┤              │
+│                                 ▼              │
+│                           ┌──────────┐         │
+│                           │   TUI    │         │
+│                           └──────────┘         │
+└───────────────────────────────────────────────┘
 ```
 
-### Key dependencies
+- **proxy** (`internal/proxy`) — transparent reverse proxy. First path segment
+  selects the upstream (`/openai/…`, `/anthropic/…`, `/openrouter/…`). A
+  per-provider extractor taps token usage from the response (streaming +
+  non-streaming), and rate-limit response headers are parsed into current-window
+  state. Serves `/healthz` (liveness) and `/stats` (live feed/burn/limits JSON).
+- **recorder** (`internal/proxy`) — prices each request via the engine and writes
+  additively into a per-minute bucket (`store.AddUsage`); keeps an in-memory ring
+  of recent events + session counters + latest rate-limit windows for `/stats`.
+- **cost engine** (`internal/cost`) — pure function (provider, model, tokens by
+  tier) → USD, with model-name normalization (dated snapshots → base pricing).
+  Provider-supplied cost (OpenRouter) is used directly when present.
+- **alert loop** (`internal/alert` + `app.StartAlertLoop`) — a ticker projects
+  monthly spend and fires an OS notification the first time each budget threshold
+  is crossed per month (dedup via `config_state`).
+- **TUI** (`internal/tui`) — full-screen bubbletea; sidebar + tabbed Live /
+  History / Alerts. Reads persisted spend from the store and live data from the
+  in-process recorder or a remote proxy's `/stats`.
 
-- `charmbracelet/bubbletea` + `lipgloss` — TUI
-- `charmbracelet/bubbles` — table/spinner/progress components
-- `spf13/viper` — config (YAML + env var overlay)
-- `zalando/go-keyring` — OS keychain for API keys
-- `modernc.org/sqlite` — pure-Go SQLite (no CGO)
-- `sqlc` — type-safe SQL codegen
-- `golang-migrate/migrate` — schema migrations
-- `go.uber.org/zap` — structured logging
-- `spf13/cobra` — CLI subcommand parsing
+### Capture: `candor run` vs. base-URL override
 
-## 4. Architecture
+The recommended entry is `candor run -- <harness>`, which sets the provider
+base-URL env vars for the child process **only** — nothing persistent, and if the
+proxy is down the harness runs directly (untracked) rather than breaking. A
+manual `ANTHROPIC_BASE_URL=…` override is the alternative for harnesses driven by
+config files.
 
-### 4.1 Process model
+## 3. Cost model (the differentiator)
 
-Single Go binary, single process. Three concurrent goroutines:
+Anthropic and OpenAI both price input tokens in three tiers — base input, cache
+read (cheap), cache write/creation (a premium). candor accounts for each
+separately (`cache_read`/`cache_creation`, `cached_tokens`) and prices them per
+tier, which most tools get wrong (e.g. ccusage prices cache creation at the
+5-minute tier while Claude Code mostly uses the 1-hour tier).
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  candor daemon                                        │
-│                                                             │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐ │
-│  │  poll loop   │──>│ cost engine  │──>│  SQLite store    │ │
-│  │  (every 5m)  │   │ (apply rules)│   │                  │ │
-│  └──────────────┘   └──────────────┘   └───────┬──────────┘ │
-│        │                                       │            │
-│        │                                  ┌────┴────┐       │
-│        │                                  │         │       │
-│        ▼                                  ▼         ▼       │
-│  ┌──────────────┐                  ┌──────────┐ ┌──────────┐│
-│  │  alert       │                  │   TUI    │ │   Web    ││
-│  │  checker     │                  │ (bubble) │ │ (HTTP)   ││
-│  └──────────────┘                  └──────────┘ └──────────┘│
-└─────────────────────────────────────────────────────────────┘
-```
+**Pricing is dynamic:** fetched from OpenRouter's public model catalog (no auth)
+on start, cached to `<db-dir>/prices.json`, refreshed daily, with a bundled table
+for offline use — no manual price tracking. OpenRouter-proxied traffic doesn't
+need it; cost comes straight from the response.
 
-- **Poll loop:** ticks every 5 min (configurable). Fetches incremental usage from each provider for the window `[last_fetched, now)`. Writes raw rows to SQLite.
-- **Cost engine:** pure function. Input = (provider, model, cache_read_tokens, cache_write_tokens, input_tokens, output_tokens, tier). Output = USD cost. Reads pricing from `config.yaml`.
-- **Alert checker:** runs after each poll. Compares projected monthly spend against thresholds. Emits OS-native notifications.
-- **TUI:** subscribes to store updates via a Go channel, redraws on change.
-- **Web:** net/http server on `127.0.0.1:7878`, serves embedded Svelte build + JSON API.
+## 4. Rate-limit windows
 
-### 4.2 Cache-aware cost model (the differentiator)
+The proxy reads providers' rate-limit response headers and exposes them in the
+dashboard:
 
-OpenAI's pricing (post July 2026) has three input-token tiers per model:
+- **Anthropic** `anthropic-ratelimit-unified-5h-*` / `-7d-*` — the Claude Code
+  plan windows (utilization + reset), which subscription users actually watch and
+  which Claude Code itself doesn't surface to hooks.
+- **OpenAI / OpenRouter** `x-ratelimit-*-requests|tokens` — per-minute limits.
 
-1. **Cache read** — ~10% of base input price
-2. **Cache write (creation)** — ~125% of base input price (the new tax)
-3. **Base input (no cache)** — 100%
+Captured live from real traffic (no extra probe calls), rendered as utilization
+bars with reset countdowns.
 
-Cost rule schema in `config.yaml`:
+## 5. Data model (SQLite)
 
-```yaml
-providers:
-  openai:
-    models:
-      gpt-4o:
-        input_per_1m: 2.50
-        cached_input_per_1m: 0.3125 # cache_read
-        cache_write_per_1m: 3.125 # cache_creation
-        output_per_1m: 10.00
-      gpt-4o-mini:
-        input_per_1m: 0.15
-        cached_input_per_1m: 0.01875
-        cache_write_per_1m: 0.1875
-        output_per_1m: 0.60
-  anthropic:
-    models:
-      claude-sonnet-4-5:
-        input_per_1m: 3.00
-        cached_input_per_1m: 0.30
-        cache_write_per_1m: 3.75
-        output_per_1m: 15.00
-```
+`modernc.org/sqlite` (pure Go, no CGO). Embedded SQL migrations run by
+`store.Migrate()`; DSN uses `_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)`.
 
-**Pricing drift mitigation:** A `tt prices diff` subcommand fetches provider pricing pages, diffs against current YAML, prints a `git diff`-style report. User reviews and manually updates.
+- `providers(id, name)` and `models(id, provider_id, name)` — interned lookups.
+- `usage_records(provider_id, model_id, bucket_start, bucket_end, input_tokens,
+cached_input_tokens, cache_write_tokens, output_tokens, cost_usd, …)` — usage
+  accumulated into per-minute buckets; the recorder adds additively so live proxy
+  writes land within a refresh tick.
+- `config_state(key, value)` — small key/value store (e.g. per-month alert dedup).
 
-### 4.3 Per-provider polling notes
+## 6. CLI surface
 
-**OpenAI:**
-
-- Endpoint: `GET /v1/organization/costs?start_time=...&end_time=...&group_by[]=model&group_by[]=line_item&limit=1000`
-- Returns `usage_type: prompt_tokens`, `cached_tokens`, `completion_tokens` — already includes cache breakdown.
-- Pagination: cursor-based via `after` param.
-- Rate limit: 60 req/min on org endpoints.
-
-**Anthropic (requires Admin API key, covers API + Claude Code):**
-
-- API Usage: `GET /v1/organizations/usage_report/messages?starting_at=...&ending_at=...&group_by[]=model&bucket_width=1d`
-- Claude Code: `GET /v1/organizations/usage_report/claude_code?starting_at=YYYY-MM-DD` (per-day, aggregates across users, prefixed `claude-code/<model>`)
-- Cost: `GET /v1/organizations/cost_report?starting_at=...&ending_at=...&group_by[]=model`
-- Auth: `x-api-key: $ANTHROPIC_ADMIN_KEY` (Admin API key — `sk-ant-admin01-...`)
-- Both endpoints return token counts with cache breakdowns (`cached_input`, `cache_creation`, `output`)
-- Data freshness: ~5 min (API), ~1h (Claude Code); supports 1-min polling
-- Pagination: cursor-based via `next_page` / `has_more`
-
-**OpenRouter:**
-
-- Endpoint: `GET /api/v1/activity` — **requires a provisioning/management key**, not a standard inference key; returns the last 30 _completed_ UTC days only. (`/api/v1/usage` does not exist; `/api/v1/credits` gives a lifetime total with a normal key.)
-- Auth: `Authorization: Bearer <key>` header.
-- Returns per-day, per-model rows with token counts (prompt/completion/reasoning) and cost in USD.
-- OpenRouter uses prefixed model IDs (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4.5`). The `models.name` column stores full prefixed IDs.
-
-## 5. Data Model (SQLite)
-
-```sql
--- migrations/001_init.sql
-
-CREATE TABLE providers (
-    id   INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE            -- 'openai' | 'anthropic' | 'openrouter'
-);
-
-CREATE TABLE models (
-    id          INTEGER PRIMARY KEY,
-    provider_id INTEGER NOT NULL REFERENCES providers(id),
-    name        TEXT NOT NULL,           -- 'gpt-4o' or 'openai/gpt-4o'
-    UNIQUE(provider_id, name)
-);
-
-CREATE TABLE usage_records (
-    id                   INTEGER PRIMARY KEY,
-    provider_id          INTEGER NOT NULL REFERENCES providers(id),
-    model_id             INTEGER NOT NULL REFERENCES models(id),
-    bucket_start         TEXT NOT NULL,  -- ISO8601 UTC, 5-min bucket
-    bucket_end           TEXT NOT NULL,
-    input_tokens         INTEGER NOT NULL,
-    cached_input_tokens  INTEGER NOT NULL DEFAULT 0,
-    cache_write_tokens   INTEGER NOT NULL DEFAULT 0,
-    output_tokens        INTEGER NOT NULL,
-    cost_usd             REAL NOT NULL,
-    raw_payload          TEXT,           -- full API response JSON for debugging
-    fetched_at           TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(provider_id, model_id, bucket_start)
-);
-
-CREATE INDEX idx_usage_time ON usage_records(bucket_start);
-CREATE INDEX idx_usage_model ON usage_records(model_id, bucket_start);
-
-CREATE TABLE alerts (
-    id              INTEGER PRIMARY KEY,
-    name            TEXT NOT NULL,
-    threshold_usd   REAL NOT NULL,
-    window          TEXT NOT NULL,       -- 'daily' | 'monthly'
-    channel         TEXT NOT NULL,       -- 'terminal' (v1) | 'slack' | 'email' (v1.1)
-    enabled         INTEGER NOT NULL DEFAULT 1,
-    last_triggered_at TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE config_state (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);  -- tracks last_poll_per_provider, schema_version, etc.
-```
-
-## 6. Configuration
-
-**File:** `~/.config/candor/config.yaml` (macOS/Linux) or `%APPDATA%\candor\config.yaml` (Windows).
-
-```yaml
-poll_interval: 5m
-database: ~/.local/share/candor/tokens.db
-web:
-  enabled: true
-  listen: 127.0.0.1:7878
-tui:
-  refresh: 1s
-defaults:
-  monthly_budget_usd: 100
-  alert_thresholds: [50, 75, 90, 100]
-
-providers:
-  openai:
-    enabled: true
-    keyring_key: candor/openai-api-key
-  anthropic:
-    enabled: true
-    keyring_key: candor/anthropic-api-key
-  openrouter:
-    enabled: true
-    keyring_key: candor/openrouter-api-key
-
-prices:
-  # ... see §4.2
-```
-
-**Secret handling:** API keys NEVER in config file. Always loaded via `go-keyring` from OS keychain. First-run `tt auth` subcommand prompts for keys and stores them.
-
-## 7. TUI Design (bubbletea)
-
-Three primary views:
-
-1. **Live dashboard** (`tt` or `candor` daemon)
+Single binary, `candor`. Bare `candor` opens the dashboard.
 
 ```
-┌─ candor ────────────────────────────────────────────┐
-│ Today: $4.32 / $10 daily budget    ▓▓▓▓▓▓░░░░ 43%          │
-│ Month: $87.50 / $100 budget        ▓▓▓▓▓▓▓▓▓░ 87% ⚠       │
-│                                                             │
-│ Top models (last 24h):                                      │
-│  gpt-4o              $2.41  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░  $1.20/M    │
-│  gpt-4o-mini         $1.13  ▓▓▓▓▓▓░░░░░░░░░░░░  $0.06/M    │
-│  claude-sonnet       $0.78  ▓▓▓▓░░░░░░░░░░░░░░░  $1.10/M    │
-│                                                             │
-│ Cache impact (24h):                                         │
-│   Saved via cache read:  $1.84 (-30%)                       │
-│   Extra via cache write: $0.92 (+15%)                        │
-│                                                             │
-│ [1] Live  [2] History  [3] Alerts  [q] Quit               │
-└─────────────────────────────────────────────────────────────┘
+candor                       # dashboard (TUI + proxy, or attach to a running proxy)
+candor run -- <harness>      # run a harness routed through the proxy (per-process, nothing persistent)
+candor proxy                 # headless proxy for a background service; also fires budget alerts
+candor tui                   # dashboard as a read-only viewer of a running proxy
+candor spend today|month     # one-shot spend (--by-model for a breakdown)
+candor status                # db size, today/month spend, whether the proxy is running
+candor service               # print a launchd/systemd unit that runs `candor proxy`
+candor migrate               # apply pending migrations
 ```
 
-2. **History view** — line chart of daily cost over last 30 days, filterable by model.
+## 7. TUI design
 
-3. **Alerts view** — list configured thresholds, current projected spend, last triggered.
+Full-screen (alt-screen) bubbletea app: a persistent left **sidebar** (nav +
+at-a-glance spend, budget bar, this-session burn rate, proxy status) beside a
+tabbed main panel:
 
-**Library:** `charmbracelet/bubbletea` + `bubbles/table` + `bubbles/progress`.
+- **Live** — 24h trend sparkline, live activity feed (from the recorder ring),
+  top models with $/M, cache impact, rate-limit windows.
+- **History** — 30-day daily-cost bar chart.
+- **Alerts** — budget, projected spend, threshold crossed/notified state.
 
-## 8. Web Dashboard
+## 8. Status (shipped)
 
-> **DROPPED** (see M4). The design below is the original, unimplemented plan, kept for reference only.
+- [x] Transparent reverse proxy, per-request usage capture, streaming +
+      non-streaming (OpenAI-compatible + Anthropic protocols).
+- [x] Fail-open, panic-isolated tapping; byte-faithful Anthropic request bodies.
+- [x] Cache-aware cost engine + dynamic pricing (OpenRouter catalog, cached,
+      bundled fallback).
+- [x] Additive per-minute storage; `/healthz` + `/stats` endpoints.
+- [x] `candor run` per-process wrapper (fail-safe when the proxy is down).
+- [x] Rate-limit window capture + dashboard panel.
+- [x] Full-screen sidebar TUI (Live / History / Alerts) with detached viewer.
+- [x] Timer-based budget projection + OS notifications (macOS/Linux/Windows).
+- [x] Single-binary consolidation; single-instance lock.
 
-**Tech:** Svelte/SvelteKit built to static files, served from `internal/web/static/` via Go 1.22+ `net/http` with `embed.FS`. Single binary, no separate Node process.
+## 9. Roadmap
 
-- Build: `npm run build` in `web/` outputs to `internal/web/static/`.
-- API: REST JSON, same backend, paths like `GET /api/usage?range=24h`, `GET /api/alerts`, `POST /api/alerts`.
-- Auth: bind to `127.0.0.1` only; no auth in v1 (localhost trust model).
+**Near-term**
 
-**Pages:** same three views as TUI plus a settings page.
+- Per-request event log / drill-down (persist the recorder ring for history).
+- `candor doctor` — verify the proxy is up and a harness is correctly routed.
+- Onboarding-free first run polish: clearer empty-state "point a harness here".
+- goreleaser (Homebrew tap, deb, signed macOS binary); `v0.1.0` tag.
 
-**Why Svelte not Next.js:** For an embedded static dashboard SvelteKit's static adapter is the lightest option (~50KB gzipped vs MB for Next.js). Alternative: plain HTML + htmx (simpler but less polished).
+**Subscription-safe capture (the honest gap)**
 
-## 9. CLI Subcommands
+The proxy is ideal for **API-billed** traffic. For Claude Code **subscription**
+(OAuth) logins, routing through any proxy carries a small, undocumented risk of
+being reclassified as third-party. A first-party capture path would serve that
+audience without the risk:
 
-```bash
-tt                          # launch TUI
-tt spend today              # one-shot: print today's spend
-tt spend month --by-model   # one-shot: monthly breakdown by model
-tt auth                     # set API keys (stores in OS keychain)
-tt alert add --monthly 75   # add alert at 75% of monthly budget
-tt prices diff              # fetch provider pricing pages, diff vs config
-tt prices list              # print current pricing table
-tt daemon                   # run as background daemon
-tt status                   # daemon health, last poll time, DB size
-```
+- Read Claude Code's own statusline `rate_limits`/usage payload (zero
+  interposition — lowest risk), or
+- An in-process `fetch()`-hook launcher (cccost-style) for full-fidelity live
+  per-request data while staying genuinely first-party.
 
-## 10. Alerting (v1)
+**Later**
 
-- Thresholds are % of `monthly_budget_usd` (e.g., 50/75/90/100%).
-- Triggered when projected monthly spend crosses threshold (projection = current_spend + extrapolated_remaining_time_at_avg_rate).
-- Channels in v1: **terminal notification only.**
-  - macOS: `osascript -e 'display notification "..." with title "candor"'`
-  - Linux: `notify-send`
-  - Windows: `msg` or `BurntToast` PowerShell
-- v1.1 escalation: Slack webhook, email (Resend).
+- OpenAI-compatible local providers via proxy (Ollama, vLLM, LM Studio).
+- Project/session tagging; CSV/Parquet export; weekly digest.
+- Additional alert channels (Slack, email).
 
-## 11. Testing Strategy
+## 10. Dropped / non-goals (history)
 
-- **Unit tests**: cost engine (pure functions, table-driven tests), config parsing, alert logic.
-- **Integration tests**: SQLite store with `:memory:` DB, mocked provider HTTP responses.
-- **HTTP mock**: `http.HandlerFunc` returning fixture JSON from `testdata/openai_costs_*.json`.
-- **TUI snapshot tests**: `charmbracelet/bubbletea` `teatest` package — record golden output, diff on change.
-- **CI**: GitHub Actions on push — `go test -race ./...`, `golangci-lint run`, `govulncheck ./...`. Mirror flowbee's path-split workflow pattern: `backend.yml` for `**/*.go`, `frontend.yml` for `web/**`.
+- **Polling mode** — pulling provider billing APIs on an interval. Removed: it
+  required privileged admin/provisioning keys, was delayed and coarse (OpenRouter
+  refuses the current UTC day), and was off-message for a live-tracking tool. The
+  proxy covers the live use case; git history retains the adapters if ever needed.
+- **Embedded web dashboard** — a SvelteKit static UI. Dropped: the TUI already
+  covers spend, top models, cache impact, history, and alerts, and a browser view
+  would add a Node toolchain for a read-only duplicate. (If ever wanted, the cheap
+  path is one HTML page + a JSON endpoint on the proxy's existing HTTP server.)
 
-## 12. Milestones
+## 11. Risks & mitigations
 
-### M0 — Spike (resolved — Anthropic docs confirmed)
-
-- [x] Anthropic: `GET /v1/organizations/usage_report/messages` exists, requires Admin API key, includes cache tracking
-- [x] OpenRouter usage: implemented against `GET /api/v1/activity` (provisioning key; the assumed `/api/v1/usage` + standard-key access turned out to be wrong)
-- [x] Decision: ship 3-provider v1 (OpenAI, Anthropic, OpenRouter)
-
-### M1 — Skeleton (4 days) — mostly complete
-
-- [x] `go mod init`, repo scaffolding
-- [x] SQLite migrations _(hand-written store + embedded migration runner; not sqlc)_
-- [x] Config loader (viper + keyring)
-- [x] OpenAI provider adapter (`GET /v1/organization/costs`, per-day/per-model via `line_item`; requires an Admin key). Note: `amount.value` is a string and `/costs` carries `quantity` (tokens) — the plan's earlier "usage_type token breakdown" note was wrong; verified against the live API.
-- [x] OpenRouter provider adapter (`GET /api/v1/activity`, per-day/per-model; requires a provisioning key)
-- [x] Anthropic provider adapter (usage*report/messages + claude_code, requires Admin API key) *(cost*report not used — cost computed by engine)*
-- [x] Cost engine (pure function, unit-tested; built-in default prices)
-- [x] `tt spend today` CLI — first end-to-end vertical slice
-
-### M2 — Daemon + Alerts (3 days) — mostly complete
-
-- [x] Poll loop (persists to store) with exponential backoff + permanent-error skip (typed provider API errors)
-- [x] Alert checker (projected spend vs thresholds, once-per-threshold/month dedup)
-- [x] `tt daemon` + `tt status` + `tt service` (launchd/systemd unit generation)
-- [x] Terminal notifications on all 3 platforms (macOS/Linux/Windows)
-
-### M3 — TUI (3 days) — mostly complete
-
-- [x] bubbletea live dashboard view (today/month/projected vs budget)
-- [x] History view (30-day daily cost bar chart)
-- [x] Alerts view (thresholds + crossed/notified state)
-- [x] Tabbed navigation (1/2/3, tab/arrows)
-- [ ] Snapshot tests _(has unit tests, not golden snapshots)_
-
-### M4 — Web Dashboard — DROPPED
-
-Cut in favor of the TUI. After the proxy pivot a browser dashboard is redundant —
-the TUI already covers spend, top models, cache impact, 30-day history, and
-alerts — and a SvelteKit build would add a Node toolchain for a read-only
-duplicate. `web/`, `internal/web`, the `web:` config block, and the frontend CI
-job were removed. (If a browser view is ever wanted, the cheap path is a single
-HTML page + JSON endpoint served by the proxy's existing HTTP server — no Node.)
-
-### M5 — Polish & Release (2 days) — partial
-
-- [x] Dynamic pricing — fetch from OpenRouter's public catalog on start, cache to disk, refresh daily, fall back to bundled defaults offline (supersedes the manual `prices:` override + `tt prices diff` plan; no manual tracking)
-- [ ] goreleaser config (Homebrew tap, dmg, deb)
-- [x] README with install/quickstart
-- [x] CLAUDE.md following flowbee conventions
-- [x] golangci-lint config + CI lint enforcement
-- [ ] v0.1.0 tag
-
-**Total estimate: ~17 working days part-time (3-4 weeks).**
-
-### Direction change (2026-07-18): proxy mode promoted to primary
-
-Empirical testing during development showed Strategy A (poll billing APIs) is a
-poor fit for the intended "live spend as you work" use case: every provider
-gates usage behind an admin/management key, and the data is delayed and coarse
-(OpenRouter's activity API refuses the current UTC day entirely). Proxy mode —
-a local transparent reverse proxy that taps `usage` from each response in real
-time — is now the primary ingestion path. It needs no admin keys (the normal
-inference key is forwarded), captures per-request usage instantly, and reuses
-the existing cost engine, store, TUI, and alerts.
-
-- [x] Transparent reverse proxy with per-request usage capture (`tt proxy`)
-- [x] OpenAI-compatible extraction (covers OpenAI + OpenRouter), streaming + non-streaming
-- [x] Additive per-minute storage (`store.AddUsage`)
-- [x] Anthropic protocol extraction (`/v1/messages`, cache_read/cache_creation; split-across-events streaming) — enables Claude Code + OpenCode-with-Claude
-- [x] Run proxy inside the main daemon alongside the TUI (`proxy.enabled: true`)
-- [ ] Per-request event log / drill-down
-- [x] Cost handling for subscription (OAuth) harnesses — API-equivalent list-price estimate from captured tokens, with model-name normalization (dated snapshots → base pricing) and current Opus/Sonnet/Haiku/Fable + GPT-4o prices in `DefaultPrices`
-
-### v1.1 stretch goals
-
-- Proxy mode for OpenAI-compatible local providers (Ollama, vLLM, LM Studio)
-- Slack + Email alert channels
-- Project tagging
-- Weekly digest email
-- CSV/Parquet export
-- Mistral, Cohere, Together, Groq adapters
-
-## 13. Risks & Mitigations
-
-| Risk                                                                    | Severity | Mitigation                                                                                                                        |
-| ----------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Anthropic Admin API key requirement (not standard API key)              | Low      | Documented in config as `keyring_key: candor/anthropic-admin-key`. Users generate via Console → Settings → Admin API keys. |
-| OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
-| OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
-| Cache-read vs cache-write breakdown not available in aggregate endpoint | Medium   | OpenAI's `/v1/organization/costs` returns `usage_type: cached_tokens` — verify in M0.                                             |
-| Pricing drift (providers change prices)                                 | Medium   | `tt prices diff` command, no auto-update.                                                                                         |
-| TUI snapshot tests brittle                                              | Low      | Use `teatest` golden files, review diffs in PR.                                                                                   |
-| OS keyring cross-platform edge cases                                    | Low      | `zalando/go-keyring` well-maintained; fallback to env var with warning.                                                           |
+| Risk                                                          | Mitigation                                                                                                                                 |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Subscription traffic reclassified as third-party by Anthropic | Keep Anthropic requests byte-faithful; position candor for API-billed traffic; document the caveat; build a first-party capture path (§9). |
+| Proxy sits in the paid-inference critical path                | Fail-open, panic-isolated tap; no `WriteTimeout`; the `run` wrapper falls back to direct when the proxy is down.                           |
+| Pricing drift                                                 | Dynamic pricing from OpenRouter's catalog, daily refresh, bundled offline fallback.                                                        |
+| A crash takes the proxy down mid-session                      | Single-instance lock + `KeepAlive`/`Restart` service unit for auto-restart; `run` never depends on a persistent global route.              |
+| Harness doesn't support a custom base URL                     | Documented limitation; a first-party capture path (§9) would cover these.                                                                  |
