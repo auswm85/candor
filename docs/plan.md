@@ -1,5 +1,13 @@
 # token-tracker — Implementation Plan
 
+> **⚠️ Superseded in parts.** This is the original polling-first plan. During
+> implementation the project pivoted: **proxy mode is now the primary ingestion
+> path** (polling is secondary) — see [Direction change](#direction-change-2026-07-18-proxy-mode-promoted-to-primary)
+> and the milestone checklists for what actually shipped. Some prose below still
+> reflects the initial design (Strategy A, sqlc, an embedded web dashboard);
+> where it conflicts with the milestones or `CLAUDE.md`, the latter win. A few
+> outright factual errors are corrected inline.
+
 ## 1. Project Overview
 
 **What it does:** A long-running local daemon that polls LLM provider usage endpoints every N minutes, applies cache-aware cost rules from a YAML config, projects monthly burn, and surfaces it via a bubbletea TUI + an embedded web dashboard.
@@ -21,7 +29,7 @@
 
 - **OpenAI** — `GET /v1/organization/costs?start_time=...&end_time=...&group_by[]=model&group_by[]=line_item`
 - **Anthropic** — `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/cost_report` (requires Admin API key — `sk-ant-admin01-...`)
-- **OpenRouter** — `GET /api/v1/usage`
+- **OpenRouter** — `GET /api/v1/activity` (corrected from `/api/v1/usage`; needs a provisioning key)
 
 ### Explicitly NOT in v1
 
@@ -50,9 +58,9 @@ token-tracker/
 │   ├── provider/
 │   │   ├── openai/                # /v1/organization/costs
 │   │   ├── anthropic/             # /v1/organizations/usage_report/messages + /claude_code
-│   │   └── openrouter/            # /api/v1/usage
+│   │   └── openrouter/            # /api/v1/activity
 │   ├── cost/                      # cost rules engine (YAML-driven)
-│   ├── store/                     # SQLite via sqlc + migrations
+│   ├── store/                     # SQLite (hand-written; embedded migrations, no sqlc)
 │   ├── alert/                     # threshold checker + notifiers
 │   ├── tui/                       # bubbletea views
 │   ├── web/                       # net/http server + embedded static
@@ -165,9 +173,9 @@ providers:
 
 **OpenRouter:**
 
-- Endpoint: `GET /api/v1/usage`
+- Endpoint: `GET /api/v1/activity` — **requires a provisioning/management key**, not a standard inference key; returns the last 30 _completed_ UTC days only. (`/api/v1/usage` does not exist; `/api/v1/credits` gives a lifetime total with a normal key.)
 - Auth: `Authorization: Bearer <key>` header.
-- Returns per-model aggregation with token counts (input, output, cache_read, cache_write) and cost in USD — already includes cache breakdown.
+- Returns per-day, per-model rows with token counts (prompt/completion/reasoning) and cost in USD.
 - OpenRouter uses prefixed model IDs (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4.5`). The `models.name` column stores full prefixed IDs.
 
 ## 5. Data Model (SQLite)
@@ -335,7 +343,7 @@ tt status                   # daemon health, last poll time, DB size
 ### M0 — Spike (resolved — Anthropic docs confirmed)
 
 - [x] Anthropic: `GET /v1/organizations/usage_report/messages` exists, requires Admin API key, includes cache tracking
-- [x] OpenRouter: `GET /api/v1/usage` works with standard API key, includes cache breakdown
+- [x] OpenRouter usage: implemented against `GET /api/v1/activity` (provisioning key; the assumed `/api/v1/usage` + standard-key access turned out to be wrong)
 - [x] Decision: ship 3-provider v1 (OpenAI, Anthropic, OpenRouter)
 
 ### M1 — Skeleton (4 days) — mostly complete
@@ -345,7 +353,7 @@ tt status                   # daemon health, last poll time, DB size
 - [x] Config loader (viper + keyring)
 - [x] OpenAI provider adapter (`GET /v1/organization/costs`, per-day/per-model via `line_item`; requires an Admin key). Note: `amount.value` is a string and `/costs` carries `quantity` (tokens) — the plan's earlier "usage_type token breakdown" note was wrong; verified against the live API.
 - [x] OpenRouter provider adapter (`GET /api/v1/activity`, per-day/per-model; requires a provisioning key)
-- [x] Anthropic provider adapter (usage_report/messages + claude_code, requires Admin API key) _(cost_report not used — cost computed by engine)_
+- [x] Anthropic provider adapter (usage*report/messages + claude_code, requires Admin API key) *(cost*report not used — cost computed by engine)*
 - [x] Cost engine (pure function, unit-tested; built-in default prices)
 - [x] `tt spend today` CLI — first end-to-end vertical slice
 

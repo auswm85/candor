@@ -1,6 +1,7 @@
 poll_interval: 5m
 database: ~/.local/share/token-tracker/tokens.db
 
+# web dashboard is planned but not built yet — these settings are inert.
 web:
   enabled: true
   listen: 127.0.0.1:7878
@@ -8,9 +9,10 @@ web:
 tui:
   refresh: 1s
 
-# Proxy mode: run `tt proxy`, then point a tool's base URL at
-# http://127.0.0.1:7879/<provider>/... to record live per-request usage.
-# Your normal inference key is forwarded untouched (no admin key needed).
+# Proxy mode (primary): the daemon runs this by default. Point a coding harness's
+# base URL at http://127.0.0.1:7879/<provider>/... to record live per-request
+# usage. Your normal inference key is forwarded untouched (no admin key needed).
+# Add upstreams for local OpenAI-compatible servers (e.g. ollama: http://localhost:11434).
 proxy:
   enabled: true # the daemon runs the proxy alongside the TUI; set false to disable
   listen: 127.0.0.1:7879

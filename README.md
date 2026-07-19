@@ -1,19 +1,19 @@
 # token-tracker
 
-Local-first LLM cost monitoring daemon. Polls provider usage APIs (OpenAI, Anthropic, OpenRouter), applies cache-aware cost rules, projects monthly spend, and surfaces results via a terminal UI (bubbletea) + embedded web dashboard.
+Local-first LLM cost tracker. A transparent local **proxy** captures live, per-request spend from coding harnesses (Claude Code, OpenCode, …), and an optional **poll loop** pulls provider usage APIs for periodic totals. Applies cache-aware cost rules, projects monthly spend, and surfaces it in a terminal UI (bubbletea).
 
-**Your API keys never leave your machine.** Keys are stored in your OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret). No cloud dependency, no telemetry, no account required.
+**Local-only.** No cloud dependency, no telemetry, no account. In proxy mode your inference key is forwarded to the provider, never stored; polling keys live in your OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret).
 
-> **Status: early development.** Anthropic polling (API + Claude Code) works end-to-end, with the cost engine, alerting, and CLI. The OpenAI and OpenRouter adapters and the web dashboard are still in progress — see the [provider table](#provider-support) and [`docs/plan.md`](docs/plan.md).
+> **Status: working, early.** Live proxy tracking (OpenAI-compatible + Anthropic protocols, streaming) and all three polling adapters (Anthropic, OpenAI, OpenRouter) work end-to-end, with the cost engine, alerting, TUI, and CLI. The web dashboard is planned/not built — see the [provider table](#provider-support) and [`docs/plan.md`](docs/plan.md).
 
 ## Features
 
-- **Cache-aware cost model** — separate tracking for cache-read, cache-write, and base input tokens. The July 2026 OpenAI cache-write pricing change is fully accounted for.
-- **Multi-provider** — Anthropic today (API + Claude Code); OpenAI and OpenRouter adapters in progress. Each provider has a custom adapter for its billing API.
-- **Local-first** — single Go binary, SQLite database, OS keychain for secrets. No cloud.
-- **Projected monthly spend** — extrapolates current burn rate against your budget, notifies once per threshold crossed each month.
-- **OS notifications** — macOS, Linux, and Windows native alerts when projected spend crosses a budget threshold.
-- **Terminal UI** — bubbletea dashboard showing today/month spend against budget. _(Web dashboard planned.)_
+- **Live per-request tracking (proxy)** — point a coding harness's base URL at the local proxy; usage is recorded as each response streams back, no admin keys needed. See [Live tracking](#live-tracking-proxy-mode).
+- **Cache-aware cost model** — separate tracking for cache-read, cache-write, and base input tokens (Anthropic's `cache_read`/`cache_creation`, OpenAI's `cached_tokens`).
+- **Multi-provider** — proxy handles OpenAI-compatible (OpenAI, OpenRouter) and Anthropic protocols; polling adapters cover all three. OpenRouter cost comes straight from the provider; others are priced by the engine.
+- **Local-first** — single Go binary, SQLite database. No cloud.
+- **Projected monthly spend + alerts** — extrapolates burn rate against your budget, fires an OS notification (macOS/Linux/Windows) once per threshold crossed each month.
+- **Terminal UI** — bubbletea tabbed dashboard: Live spend + proxy status, 30-day History chart, Alerts. _(Web dashboard planned.)_
 
 ## Quick Start
 
@@ -95,23 +95,30 @@ API keys are stored in your OS keychain via `go-keyring` — never in the config
 ## Architecture
 
 ```
+  harness (Claude Code / OpenCode)                provider usage APIs
+        │ base_url                                       ▲ every N min
+        ▼                                                │
 ┌─────────────────────────────────────────────────────────────┐
 │  token-tracker daemon                                        │
 │                                                              │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐ │
-│  │  poll loop   │──>│ cost engine  │──>│  SQLite store    │ │
-│  │  (every 5m)  │   │ (apply rules)│   │                  │ │
-│  └──────────────┘   └──────────────┘   └───────┬──────────┘ │
-│        │                                       │            │
-│        │                                  ┌────┴────┐       │
-│        │                                  │         │       │
-│        ▼                                  ▼         ▼       │
-│  ┌──────────────┐                  ┌──────────┐ ┌──────────┐│
-│  │  alert       │                  │   TUI    │ │   Web    ││
-│  │  checker     │                  │ (bubble) │ │ (HTTP)   ││
-│  └──────────────┘                  └──────────┘ └──────────┘│
+│  ┌──────────────┐        ┌──────────────┐   ┌─────────────┐  │
+│  │    proxy     │──┐  ┌──│  poll loop   │──>│ cost engine │  │
+│  │ (per request)│  │  │  │ (poll+alert) │   └──────┬──────┘  │
+│  └──────────────┘  ▼  ▼  └──────────────┘          ▼         │
+│                 ┌──────────────┐          ┌─────────────────┐│
+│                 │   recorder   │─────────>│  SQLite store   ││
+│                 └──────────────┘          └────────┬────────┘│
+│                                                    ▼         │
+│                                              ┌──────────┐    │
+│                                              │   TUI    │    │
+│                                              │ (bubble) │    │
+│                                              └──────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+Proxy forwards each request to the real provider and taps usage from the
+response; the poll loop pulls official usage APIs on an interval. Both cost
+their records and write to SQLite, which the TUI reads. (Web dashboard planned.)
 
 See `docs/plan.md` for the full implementation plan.
 
@@ -122,19 +129,19 @@ See `docs/plan.md` for the full implementation plan.
 | Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/usage_report/claude_code` | **Working** — requires Admin API key, covers API + Claude Code costs, includes cache tracking |
 | OpenRouter                | `GET /api/v1/activity`                                                                           | **Working** — requires a provisioning key (openrouter.ai/settings/provisioning-keys); per-day, per-model cost + tokens |
 | OpenAI                    | `GET /v1/organization/costs`                                                                     | **Working** — requires an Admin key (`platform.openai.com/settings/organization/admin-keys`, self-serve incl. personal accounts); per-day, per-model cost + tokens |
-| Ollama / vLLM / LM Studio | N/A (no billing API)                                                                             | v1.1 deferred — proxy mode TBD                                                                |
+| Ollama / vLLM / LM Studio | N/A (no billing API)                                                                             | No polling, but **proxy mode works** — add a `proxy.upstreams` entry pointing at the local OpenAI-compatible server |
 
 ## Development
 
 ```sh
-go build ./cmd/token-tracker   # build the daemon
+go build ./cmd/token-tracker   # build the daemon (TUI + proxy + poll)
 go build ./cmd/tt              # build the CLI
 go test -race -count=1 ./...   # run all tests
 go vet ./...                   # static analysis
-
-# Web dashboard (requires Node 22+)
-cd web && npm ci && npm run build
+golangci-lint run              # lint (.golangci.yml; needs v2 built with go1.26)
 ```
+
+The web dashboard (`internal/web`) is not built yet.
 
 See `CLAUDE.md` for full commands and architecture notes.
 
