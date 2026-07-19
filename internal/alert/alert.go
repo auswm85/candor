@@ -64,6 +64,9 @@ func (c *Checker) Check(projectedMonth float64) (string, error) {
 		if err := c.store.SetConfigState(monthKey, strconv.Itoa(crossed)); err != nil {
 			return msg, err
 		}
+		// Append to the alert history log (best-effort; a failed log write
+		// shouldn't mask a delivered notification).
+		_ = c.store.RecordAlert(crossed, projectedMonth, budget)
 	}
 	return msg, nil
 }

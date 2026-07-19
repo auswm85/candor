@@ -56,6 +56,28 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	}
 }
 
+func TestChecker_LogsHistory(t *testing.T) {
+	c := newTestChecker(t, 100, []int{50, 75, 90, 100})
+
+	if _, err := c.Check(80); err != nil { // crosses 75
+		t.Fatal(err)
+	}
+	if _, err := c.Check(95); err != nil { // crosses 90
+		t.Fatal(err)
+	}
+
+	events, err := c.store.RecentAlerts(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d history events, want 2", len(events))
+	}
+	if events[0].ThresholdPct != 90 || events[1].ThresholdPct != 75 {
+		t.Errorf("history thresholds = %d, %d; want 90, 75", events[0].ThresholdPct, events[1].ThresholdPct)
+	}
+}
+
 func TestChecker_NoBudgetNoAlert(t *testing.T) {
 	c := newTestChecker(t, 0, []int{50})
 	msg, err := c.Check(1000)

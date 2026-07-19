@@ -205,6 +205,47 @@ func TestStore_ModelUsageSince(t *testing.T) {
 	}
 }
 
+func TestStore_AlertEvents(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty to start.
+	if got, err := s.RecentAlerts(5); err != nil || len(got) != 0 {
+		t.Fatalf("empty RecentAlerts = %v, %v", got, err)
+	}
+
+	if err := s.RecordAlert(75, 77.5, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordAlert(90, 92.0, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.RecentAlerts(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2", len(got))
+	}
+	// Newest first; the 90% event was recorded last.
+	if got[0].ThresholdPct != 90 || abs(got[0].ProjectedUSD-92.0) > 0.001 || abs(got[0].BudgetUSD-100) > 0.001 {
+		t.Errorf("newest event = %+v", got[0])
+	}
+	if got[1].ThresholdPct != 75 {
+		t.Errorf("second event = %+v", got[1])
+	}
+	if got[0].FiredAt.IsZero() {
+		t.Error("FiredAt not parsed")
+	}
+}
+
 func abs(f float64) float64 {
 	if f < 0 {
 		return -f

@@ -303,6 +303,48 @@ func (s *Store) SetConfigState(key, value string) error {
 	return err
 }
 
+// AlertEvent is one budget-threshold notification that was fired.
+type AlertEvent struct {
+	FiredAt      time.Time
+	ThresholdPct int
+	ProjectedUSD float64
+	BudgetUSD    float64
+}
+
+// RecordAlert appends a fired budget alert to the history log.
+func (s *Store) RecordAlert(thresholdPct int, projectedUSD, budgetUSD float64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO alert_events (fired_at, threshold_pct, projected_usd, budget_usd)
+		 VALUES (?, ?, ?, ?)`,
+		time.Now().UTC().Format(time.RFC3339), thresholdPct, projectedUSD, budgetUSD,
+	)
+	return err
+}
+
+// RecentAlerts returns up to n most-recently fired alerts, newest first.
+func (s *Store) RecentAlerts(n int) ([]AlertEvent, error) {
+	rows, err := s.db.Query(
+		`SELECT fired_at, threshold_pct, projected_usd, budget_usd
+		 FROM alert_events ORDER BY fired_at DESC, id DESC LIMIT ?`, n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []AlertEvent
+	for rows.Next() {
+		var e AlertEvent
+		var fired string
+		if err := rows.Scan(&fired, &e.ThresholdPct, &e.ProjectedUSD, &e.BudgetUSD); err != nil {
+			return nil, err
+		}
+		e.FiredAt, _ = time.Parse(time.RFC3339, fired)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ModelUsage is a per-model token + cost aggregate, ordered by spend descending.
 type ModelUsage struct {
 	Provider   string

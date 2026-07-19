@@ -77,17 +77,18 @@ type model struct {
 	height int
 
 	// dashboard state
-	tab        tab
-	today      float64
-	month      float64
-	projected  float64
-	daily      []store.DayCost
-	hourly     []store.HourCost
-	topModels  []store.ModelUsage
-	cacheSaved float64
-	cacheExtra float64
-	notified   int // highest budget threshold already alerted this month
-	spendErr   string
+	tab          tab
+	today        float64
+	month        float64
+	projected    float64
+	daily        []store.DayCost
+	hourly       []store.HourCost
+	topModels    []store.ModelUsage
+	cacheSaved   float64
+	cacheExtra   float64
+	notified     int // highest budget threshold already alerted this month
+	recentAlerts []store.AlertEvent
+	spendErr     string
 
 	// live session state (from the in-process proxy recorder)
 	feed      []proxy.Event
@@ -136,16 +137,17 @@ func NewProgram(m model) *tea.Program {
 }
 
 type spendMsg struct {
-	today      float64
-	month      float64
-	projected  float64
-	daily      []store.DayCost
-	hourly     []store.HourCost
-	topModels  []store.ModelUsage
-	cacheSaved float64
-	cacheExtra float64
-	notified   int
-	err        error
+	today        float64
+	month        float64
+	projected    float64
+	daily        []store.DayCost
+	hourly       []store.HourCost
+	topModels    []store.ModelUsage
+	cacheSaved   float64
+	cacheExtra   float64
+	notified     int
+	recentAlerts []store.AlertEvent
+	err          error
 
 	// live session snapshot (nil recorder → zero values)
 	feed      []proxy.Event
@@ -195,6 +197,10 @@ func (m model) loadSpend() tea.Msg {
 	if v, err := m.store.GetConfigState("alert_notified_" + now.Format("2006-01")); err == nil && v != "" {
 		notified, _ = strconv.Atoi(v)
 	}
+	recentAlerts, err := m.store.RecentAlerts(5)
+	if err != nil {
+		return spendMsg{err: err}
+	}
 
 	// Per-model breakdown (this month) → top models + aggregate cache impact.
 	usage, err := m.store.ModelUsageSince(startOfMonth)
@@ -213,6 +219,7 @@ func (m model) loadSpend() tea.Msg {
 	msg := spendMsg{
 		today: today, month: month, projected: projected, daily: daily, hourly: hourly,
 		topModels: usage, cacheSaved: saved, cacheExtra: extra, notified: notified,
+		recentAlerts: recentAlerts,
 	}
 	// Live session data comes from the in-process recorder (all-in-one mode) or,
 	// when detached, from a running proxy's /stats endpoint (viewer mode).
@@ -315,6 +322,7 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cacheSaved = msg.cacheSaved
 			m.cacheExtra = msg.cacheExtra
 			m.notified = msg.notified
+			m.recentAlerts = msg.recentAlerts
 			m.feed = msg.feed
 			m.limits = msg.limits
 			m.sessReq = msg.sessReq
@@ -653,6 +661,17 @@ func (m model) renderAlerts(width int) string {
 		fmt.Fprintf(&b, "  %s  %3d%%   %s\n",
 			lipgloss.NewStyle().Foreground(color).Render(mark), t,
 			lipgloss.NewStyle().Foreground(color).Render(note))
+	}
+
+	// History of notifications actually fired.
+	if len(m.recentAlerts) > 0 {
+		fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Recent alerts"))
+		for _, a := range m.recentAlerts {
+			fmt.Fprintf(&b, "  %s  %s  $%.0f / $%.0f\n",
+				dimStyle.Render(a.FiredAt.Local().Format("Jan 02 15:04")),
+				lipgloss.NewStyle().Foreground(clrYellow).Render(fmt.Sprintf("%3d%%", a.ThresholdPct)),
+				a.ProjectedUSD, a.BudgetUSD)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
