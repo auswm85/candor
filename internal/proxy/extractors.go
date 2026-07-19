@@ -193,7 +193,13 @@ func anthropicToUsage(model string, u anthropicUsage) Usage {
 	}
 }
 
-func (anthropicExtractor) PrepareRequestBody(body []byte) []byte { return body } // usage always present
+// PrepareRequestBody deliberately returns the body untouched. Anthropic includes
+// usage in responses without any request flag, and — critically — Claude Code
+// subscription (OAuth) traffic must stay byte-for-byte first-party: mutating the
+// body would change the prompt-cache key and risk the request being classified as
+// a non-first-party harness. Do NOT inject anything here. (See proxy_test.go →
+// TestProxy_AnthropicRequestBodyForwardedVerbatim.)
+func (anthropicExtractor) PrepareRequestBody(body []byte) []byte { return body }
 
 func (anthropicExtractor) NonStreaming(body []byte) *Usage {
 	var r struct {

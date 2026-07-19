@@ -165,6 +165,46 @@ func TestProxy_StatsEndpointReflectsRecordedRequests(t *testing.T) {
 	}
 }
 
+// TestProxy_AnthropicRequestBodyForwardedVerbatim guards prompt-cache continuity
+// (and first-party fidelity): the Anthropic request body must reach the upstream
+// byte-for-byte, with NO mutation — unlike the OpenAI/OpenRouter paths that inject
+// usage flags. Mutating it would change the cache key and risk the traffic being
+// classified as a non-first-party harness on subscription logins.
+func TestProxy_AnthropicRequestBodyForwardedVerbatim(t *testing.T) {
+	// Streaming request: the OpenAI path would inject stream_options here; the
+	// Anthropic path must not touch it.
+	reqBody := `{"model":"claude-sonnet-4-5","stream":true,"system":"be terse","messages":[{"role":"user","content":"hi"}]}`
+
+	var got string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		if r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
+			t.Errorf("anthropic-beta not forwarded: %q", r.Header.Get("anthropic-beta"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	p, _ := newProxy(t, "anthropic", upstream.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/anthropic/v1/messages", strings.NewReader(reqBody))
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if got != reqBody {
+		t.Fatalf("anthropic request body was mutated:\n got:  %s\n want: %s", got, reqBody)
+	}
+}
+
 func TestProxy_StatsExposesRateLimits(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "62.5")
