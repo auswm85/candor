@@ -81,11 +81,11 @@ func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cache
 	return baseInput + cachedCost + writeCost + outputCost
 }
 
-// DefaultPrices returns built-in pricing (USD per 1M tokens) used when the
-// config file does not override a provider/model. Cache-read is ~0.1x input and
-// 5-minute cache-write is ~1.25x input. Values reflect published list prices as
-// of mid-2026 and can drift; `tt prices diff` is the intended reconciliation
-// path once implemented. Dated snapshot IDs (e.g. claude-sonnet-4-5-20250929)
+// DefaultPrices returns built-in pricing (USD per 1M tokens) used as the offline
+// fallback when the dynamic OpenRouter catalog (internal/pricing) is unavailable.
+// Cache-read is ~0.1x input and 5-minute cache-write is ~1.25x input. Values
+// reflect published list prices as of mid-2026 and can drift; the live catalog is
+// the primary source. Dated snapshot IDs (e.g. claude-sonnet-4-5-20250929)
 // resolve to these base entries via model normalization.
 func DefaultPrices() Prices {
 	return Prices{

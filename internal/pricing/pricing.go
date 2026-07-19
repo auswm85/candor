@@ -135,7 +135,9 @@ func Load(cacheDir, source string) cost.Prices {
 	}
 	cachePath := filepath.Join(cacheDir, "prices.json")
 
-	if env, ok := readCache(cachePath); ok && time.Since(env.FetchedAt) < cacheTTL {
+	// Only treat the cache as fresh if it came from the *same* source — otherwise
+	// changing pricing.source would keep serving the old source's prices for a day.
+	if env, ok := readCache(cachePath); ok && env.Source == source && time.Since(env.FetchedAt) < cacheTTL {
 		return overlay(merged, env.Prices)
 	}
 
@@ -146,8 +148,10 @@ func Load(cacheDir, source string) cost.Prices {
 		writeCache(cachePath, cacheEnvelope{FetchedAt: time.Now().UTC(), Source: source, Prices: fetched})
 		return overlay(merged, fetched)
 	}
-	// Fetch failed — use a stale cache if we have one, else bundled defaults.
-	if env, ok := readCache(cachePath); ok {
+	// Fetch failed — fall back to a stale cache only if it came from the *same*
+	// source, otherwise the bundled defaults. Never serve another source's prices
+	// (that's the same trap the fresh-path source check above avoids).
+	if env, ok := readCache(cachePath); ok && env.Source == source {
 		return overlay(merged, env.Prices)
 	}
 	return merged

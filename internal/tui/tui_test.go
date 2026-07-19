@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/auswm85/candor/internal/config"
 	"github.com/auswm85/candor/internal/cost"
@@ -13,6 +14,24 @@ import (
 func update(m tea.Model, msg tea.Msg) model {
 	updated, _ := m.Update(msg)
 	return updated.(model)
+}
+
+func TestParseRefresh(t *testing.T) {
+	cases := map[string]time.Duration{
+		"1s":       time.Second,
+		"2500ms":   2500 * time.Millisecond,
+		"":         5 * time.Second,        // invalid → fallback
+		"garbage":  5 * time.Second,        // invalid → fallback
+		"0s":       5 * time.Second,        // non-positive → fallback
+		"-1s":      5 * time.Second,        // negative → fallback
+		"2562048h": 5 * time.Second,        // overflows ParseDuration → fallback
+		"10ms":     250 * time.Millisecond, // below floor → floored
+	}
+	for in, want := range cases {
+		if got := parseRefresh(in); got != want {
+			t.Errorf("parseRefresh(%q) = %v, want %v", in, got, want)
+		}
+	}
 }
 
 func TestMoneyFine(t *testing.T) {

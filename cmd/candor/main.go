@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -98,10 +99,12 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
 	listen := app.ProxyListen(cfg)
-	m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg))
+	engine := app.BuildEngine(cfg) // one price load, shared by the TUI and recorder
+	m := tui.NewModel(cfg).WithStore(st).WithEngine(engine)
 
 	// Host the live proxy alongside the dashboard — unless one is already running
 	// (e.g. a background service), in which case attach as a viewer via /stats.
+	var proxySrv *http.Server
 	switch {
 	case !cfg.Proxy.Enabled:
 		// proxy disabled: dashboard shows persisted data only
@@ -112,16 +115,21 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		if err := app.ValidateProxyListen(listen, cfg.Proxy.AllowNonLoopback); err != nil {
 			return fmt.Errorf("proxy: %w", err)
 		}
-		rec := app.BuildRecorder(cfg, st)
+		// Bind synchronously so a port-in-use error is surfaced to the user
+		// instead of the dashboard silently coming up without a proxy.
+		ln, err := net.Listen("tcp", listen)
+		if err != nil {
+			return fmt.Errorf("proxy listen on %s: %w", listen, err)
+		}
+		rec := app.BuildRecorder(st, engine)
 		m = m.WithRecorder(rec)
-		proxySrv := newProxyServer(listen, app.BuildProxy(cfg, rec))
+		proxySrv = newProxyServer(listen, app.BuildProxy(cfg, rec))
 		go func() {
-			log.Printf("proxy listening on http://%s", proxySrv.Addr)
-			if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("proxy listening on http://%s", listen)
+			if err := proxySrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				log.Printf("proxy: %v", err)
 			}
 		}()
-		go shutdownOnDone(ctx, proxySrv)
 	}
 
 	app.StartAlertLoop(ctx, cfg, st, alertInterval)
@@ -132,8 +140,21 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		cancel()
 		p.Quit()
 	}()
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("tui: %w", err)
+	_, runErr := p.Run()
+
+	// Tear down in order: stop background workers, then drain the proxy so any
+	// in-flight request finishes before the deferred store close — otherwise a
+	// request landing mid-shutdown would write to a closing DB.
+	cancel()
+	if proxySrv != nil {
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := proxySrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("proxy shutdown: %v", err)
+		}
+		cancelShutdown()
+	}
+	if runErr != nil {
+		return fmt.Errorf("tui: %w", runErr)
 	}
 	return nil
 }
@@ -161,7 +182,7 @@ Also fires budget-threshold notifications while it runs.`,
 		if err := app.ValidateProxyListen(listen, cfg.Proxy.AllowNonLoopback); err != nil {
 			return fmt.Errorf("proxy: %w", err)
 		}
-		srv := newProxyServer(listen, app.BuildProxy(cfg, app.BuildRecorder(cfg, st)))
+		srv := newProxyServer(listen, app.BuildProxy(cfg, app.BuildRecorder(st, app.BuildEngine(cfg))))
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

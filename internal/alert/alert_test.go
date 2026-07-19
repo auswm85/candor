@@ -29,9 +29,10 @@ func newTestChecker(t *testing.T, budget float64, thresholds []int) *Checker {
 
 func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	c := newTestChecker(t, 100, []int{50, 75, 90, 100})
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) // fixed: dedup key is per-month
 
 	// Projected $80 → 80% crosses the 75 threshold (and 50).
-	msg, err := c.Check(80, time.Now())
+	msg, err := c.Check(80, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	}
 
 	// Same projection again must not re-notify.
-	msg, err = c.Check(80, time.Now())
+	msg, err = c.Check(80, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	}
 
 	// Rising to 95% crosses the higher 90 threshold → notify again.
-	msg, err = c.Check(95, time.Now())
+	msg, err = c.Check(95, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,13 +59,33 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	}
 }
 
+func TestChecker_RefiresNextMonth(t *testing.T) {
+	c := newTestChecker(t, 100, []int{50, 75, 90})
+	july := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	// July: 80% crosses 75 → fires, then dedups.
+	if msg, _ := c.Check(80, july); msg == "" {
+		t.Fatal("expected a July notification at 80%")
+	}
+	if msg, _ := c.Check(80, july); msg != "" {
+		t.Fatalf("expected July dedup, got %q", msg)
+	}
+
+	// August: same projection must fire again — dedup is keyed per month.
+	august := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	if msg, _ := c.Check(80, august); msg == "" {
+		t.Fatal("expected re-notification in the new month")
+	}
+}
+
 func TestChecker_LogsHistory(t *testing.T) {
 	c := newTestChecker(t, 100, []int{50, 75, 90, 100})
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
 
-	if _, err := c.Check(80, time.Now()); err != nil { // crosses 75
+	if _, err := c.Check(80, now); err != nil { // crosses 75
 		t.Fatal(err)
 	}
-	if _, err := c.Check(95, time.Now()); err != nil { // crosses 90
+	if _, err := c.Check(95, now); err != nil { // crosses 90
 		t.Fatal(err)
 	}
 

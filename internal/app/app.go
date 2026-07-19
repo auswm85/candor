@@ -76,10 +76,11 @@ func BuildEngine(cfg *config.Config) *cost.Engine {
 	return cost.New(priceTable(cfg))
 }
 
-// BuildRecorder constructs the proxy usage recorder (shared with the TUI so it
-// can show the live activity feed and burn rate).
-func BuildRecorder(cfg *config.Config, st *store.Store) *proxy.Recorder {
-	return proxy.NewRecorder(st, cost.New(priceTable(cfg)))
+// BuildRecorder constructs the proxy usage recorder around an existing cost
+// engine — callers build one engine (via BuildEngine) and share it with the TUI,
+// so pricing is loaded once per process.
+func BuildRecorder(st *store.Store, engine *cost.Engine) *proxy.Recorder {
+	return proxy.NewRecorder(st, engine)
 }
 
 // BuildProxy constructs the live-usage proxy handler around a recorder.

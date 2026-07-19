@@ -71,6 +71,8 @@ type model struct {
 	engine   *cost.Engine
 	recorder *proxy.Recorder // in-process live data (all-in-one mode)
 	statsURL string          // remote proxy /stats (viewer mode); used when recorder is nil
+	refresh  time.Duration   // dashboard refresh interval (from tui.refresh config)
+	loading  bool            // a loadSpend is in flight — skip new ones so refreshes don't overlap
 
 	// terminal size (from tea.WindowSizeMsg)
 	width  int
@@ -101,7 +103,20 @@ type model struct {
 }
 
 func NewModel(cfg *config.Config) model {
-	return model{cfg: cfg}
+	return model{cfg: cfg, refresh: parseRefresh(cfg.TUI.Refresh)}
+}
+
+// parseRefresh turns the configured tui.refresh string into a duration, falling
+// back to 5s and flooring at 250ms so a typo/tiny value can't busy-loop the UI.
+func parseRefresh(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 5 * time.Second
+	}
+	if d < 250*time.Millisecond {
+		return 250 * time.Millisecond
+	}
+	return d
 }
 
 // WithStore attaches a store so the dashboard can display recorded spend.
@@ -265,13 +280,13 @@ func fetchStats(url string) (proxy.Stats, error) {
 	return s, nil
 }
 
-func tick() tea.Cmd {
-	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return tickMsg{} })
+func tick(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
 func (m model) Init() tea.Cmd {
 	if m.store != nil {
-		return tea.Batch(m.loadSpend, tick())
+		return tick(0) // fire the first refresh immediately, then heartbeat on tick
 	}
 	return nil
 }
@@ -297,6 +312,10 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "r":
+			if m.loading {
+				return m, nil // a refresh is already running
+			}
+			m.loading = true
 			return m, m.loadSpend
 		case "1":
 			m.tab = tabLive
@@ -310,6 +329,7 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tab = (m.tab + 2) % 3
 		}
 	case spendMsg:
+		m.loading = false
 		if msg.err != nil {
 			m.spendErr = msg.err.Error()
 		} else {
@@ -333,7 +353,13 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updatedAt = time.Now()
 		}
 	case tickMsg:
-		return m, tea.Batch(m.loadSpend, tick())
+		// Steady heartbeat: always re-arm, but only issue a load when the previous
+		// one has finished — so a slow /stats fetch can't stack up overlapping refreshes.
+		if m.loading {
+			return m, tick(m.refresh)
+		}
+		m.loading = true
+		return m, tea.Batch(m.loadSpend, tick(m.refresh))
 	}
 	return m, nil
 }
