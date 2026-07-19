@@ -10,12 +10,15 @@ import (
 // in "claude-sonnet-4-5-20250929" or the "-2024-08-06" in "gpt-4o-2024-08-06".
 var modelDateSuffix = regexp.MustCompile(`-(\d{8}|\d{4}-\d{2}-\d{2})$`)
 
-// normalizeModel maps the dated/prefixed model IDs that coding harnesses send
-// to the base IDs used in the price tables. Claude Code sends dated snapshots
-// (claude-sonnet-4-5-20250929) and the poll path uses a "claude-code/" prefix.
-func normalizeModel(model string) string {
+// NormalizeModel maps the various model-ID spellings to a single canonical key
+// so proxied traffic, the bundled table, and the dynamic (OpenRouter) table all
+// line up. It strips the "claude-code/" prefix and any dated snapshot suffix,
+// and folds version dots to dashes — Anthropic reports "claude-sonnet-4-5" while
+// OpenRouter lists "claude-sonnet-4.5"; both normalize to "claude-sonnet-4-5".
+func NormalizeModel(model string) string {
 	model = strings.TrimPrefix(model, "claude-code/")
-	return modelDateSuffix.ReplaceAllString(model, "")
+	model = modelDateSuffix.ReplaceAllString(model, "")
+	return strings.ReplaceAll(model, ".", "-")
 }
 
 type ModelPrice struct {
@@ -42,9 +45,8 @@ func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cache
 	}
 	p, ok := modelPrices[model]
 	if !ok {
-		// Fall back to the normalized ID (dated snapshot / claude-code prefix
-		// stripped) so proxied harness traffic still gets costed.
-		p, ok = modelPrices[normalizeModel(model)]
+		// Fall back to the canonical ID so proxied harness traffic still costs.
+		p, ok = modelPrices[NormalizeModel(model)]
 	}
 	if !ok {
 		return 0

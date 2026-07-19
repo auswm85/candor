@@ -38,40 +38,11 @@ providers:
     enabled: true
     keyring_key: token-tracker/openrouter-api-key
 
-# NOTE: config-driven pricing is not yet wired up. The cost engine currently
-# uses built-in defaults (internal/cost.DefaultPrices). This section documents
-# the intended override schema; editing it has no effect yet.
-prices:
-  openai:
-    gpt-4o:
-      input_per_1m: 2.50
-      cached_input_per_1m: 0.3125
-      cache_write_per_1m: 3.125
-      output_per_1m: 10.00
-    gpt-4o-mini:
-      input_per_1m: 0.15
-      cached_input_per_1m: 0.01875
-      cache_write_per_1m: 0.1875
-      output_per_1m: 0.60
-  anthropic:
-    claude-sonnet-4-5:
-      input_per_1m: 3.00
-      cached_input_per_1m: 0.30
-      cache_write_per_1m: 3.75
-      output_per_1m: 15.00
-    claude-code/claude-sonnet-4-5:
-      input_per_1m: 3.00
-      cached_input_per_1m: 0.30
-      cache_write_per_1m: 3.75
-      output_per_1m: 15.00
-  openrouter:
-    openai/gpt-4o:
-      input_per_1m: 2.50
-      cached_input_per_1m: 0.3125
-      cache_write_per_1m: 3.125
-      output_per_1m: 10.00
-    anthropic/claude-sonnet-4-5:
-      input_per_1m: 3.00
-      cached_input_per_1m: 0.30
-      cache_write_per_1m: 3.75
-      output_per_1m: 15.00
+# Pricing is fetched dynamically from OpenRouter's public model catalog (no auth)
+# on daemon start, cached to <db-dir>/prices.json, and refreshed daily. If the
+# fetch fails, a bundled price table is used — so it always works offline. No
+# manual price tracking. Set source to "" to disable dynamic pricing (bundled
+# defaults only), or point it at a mirror.
+# (OpenRouter-proxied traffic doesn't need this — its cost comes from the response.)
+pricing:
+  source: https://openrouter.ai/api/v1/models

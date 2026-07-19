@@ -8,13 +8,18 @@ import (
 )
 
 type Config struct {
-	PollInterval string   `mapstructure:"poll_interval"`
-	Database     string   `mapstructure:"database"`
-	Web          WebCfg   `mapstructure:"web"`
-	TUI          TUICfg   `mapstructure:"tui"`
-	Defaults     Defaults `mapstructure:"defaults"`
-	Providers    ProvCfg  `mapstructure:"providers"`
-	Proxy        ProxyCfg `mapstructure:"proxy"`
+	PollInterval string     `mapstructure:"poll_interval"`
+	Database     string     `mapstructure:"database"`
+	Web          WebCfg     `mapstructure:"web"`
+	TUI          TUICfg     `mapstructure:"tui"`
+	Defaults     Defaults   `mapstructure:"defaults"`
+	Providers    ProvCfg    `mapstructure:"providers"`
+	Proxy        ProxyCfg   `mapstructure:"proxy"`
+	Pricing      PricingCfg `mapstructure:"pricing"`
+}
+
+type PricingCfg struct {
+	Source string `mapstructure:"source"` // dynamic price catalog URL; "" disables
 }
 
 type ProxyCfg struct {
@@ -73,6 +78,7 @@ func Load() (*Config, error) {
 	v.SetDefault("proxy.listen", "127.0.0.1:7879")
 	v.SetDefault("proxy.allow_nonloopback", false)
 	v.SetDefault("proxy.max_body_bytes", 16777216) // 16 MiB
+	v.SetDefault("pricing.source", "https://openrouter.ai/api/v1/models")
 	v.SetDefault("proxy.upstreams", map[string]string{
 		"openai":     "https://api.openai.com",
 		"openrouter": "https://openrouter.ai",

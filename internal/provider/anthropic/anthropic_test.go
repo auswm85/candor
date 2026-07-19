@@ -141,7 +141,10 @@ func TestPollClaudeCodeMultiDay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	a := New("sk-ant-admin01-test-key").WithBaseURL(server.URL)
+	// Pin the clock so the day-walk is deterministic (now-2h = 2026-07-18 22:00,
+	// so it covers 2026-07-17 and 2026-07-18 only).
+	a := New("sk-ant-admin01-test-key").WithBaseURL(server.URL).
+		WithNowFn(func() time.Time { return time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC) })
 	// Should poll 2 days: 2026-07-17 and 2026-07-18
 	records, err := a.pollClaudeCode(context.Background(), time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC))
 	if err != nil {

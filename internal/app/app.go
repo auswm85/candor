@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"time"
 
 	"github.com/auswm85/token-tracker/internal/alert"
@@ -13,6 +14,7 @@ import (
 	"github.com/auswm85/token-tracker/internal/config"
 	"github.com/auswm85/token-tracker/internal/cost"
 	"github.com/auswm85/token-tracker/internal/poll"
+	"github.com/auswm85/token-tracker/internal/pricing"
 	"github.com/auswm85/token-tracker/internal/provider"
 	"github.com/auswm85/token-tracker/internal/provider/anthropic"
 	"github.com/auswm85/token-tracker/internal/provider/openai"
@@ -64,9 +66,16 @@ func ValidateProxyListen(addr string, allowNonLoopback bool) error {
 	return nil
 }
 
+// priceTable loads model pricing dynamically (cached next to the DB), falling
+// back to bundled defaults. Called once per engine; the on-disk cache dedupes
+// the fetch across the proxy + poll engines within a single daemon start.
+func priceTable(cfg *config.Config) cost.Prices {
+	return pricing.Load(filepath.Dir(cfg.Database), cfg.Pricing.Source)
+}
+
 // BuildProxy constructs the live-usage proxy handler backed by the store.
 func BuildProxy(cfg *config.Config, st *store.Store) *proxy.Proxy {
-	rec := proxy.NewRecorder(st, cost.New(cost.DefaultPrices()))
+	rec := proxy.NewRecorder(st, cost.New(priceTable(cfg)))
 	maxBody := cfg.Proxy.MaxBodyBytes
 	if maxBody == 0 {
 		maxBody = 16 << 20 // 16 MiB default
@@ -102,7 +111,7 @@ func NewScheduler(cfg *config.Config, st *store.Store) *poll.Scheduler {
 	if len(providers) == 0 {
 		return nil
 	}
-	engine := cost.New(cost.DefaultPrices())
+	engine := cost.New(priceTable(cfg))
 	alerter := alert.New(cfg, st)
 	return poll.New(providers, st, engine, alerter, ParseInterval(cfg.PollInterval, 5*time.Minute))
 }

@@ -4,8 +4,6 @@ Local-first LLM cost tracker. A transparent local **proxy** captures live, per-r
 
 **Local-only.** No cloud dependency, no telemetry, no account. In proxy mode your inference key is forwarded to the provider, never stored; polling keys live in your OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret).
 
-> **Status: working, early.** Live proxy tracking (OpenAI-compatible + Anthropic protocols, streaming) and all three polling adapters (Anthropic, OpenAI, OpenRouter) work end-to-end, with the cost engine, alerting, TUI, and CLI. The web dashboard is planned/not built — see the [provider table](#provider-support) and [`docs/plan.md`](docs/plan.md).
-
 ## Features
 
 - **Live per-request tracking (proxy)** — point a coding harness's base URL at the local proxy; usage is recorded as each response streams back, no admin keys needed. See [Live tracking](#live-tracking-proxy-mode).
@@ -72,6 +70,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:7879/anthropic claude
 ```
 
 Notes:
+
 - Requires a harness that supports a custom base URL (Claude Code, OpenCode, Aider, Cline, …). Tools that hardcode their endpoint can't be proxied.
 - On an API key, the engine prices the captured tokens — **actual cost**. On a subscription (Pro/Max OAuth) login there's no per-token billing, so the same figure is an **API-equivalent estimate**: what that usage would cost at list price. Token and cache counts are accurate either way, and dated model IDs (e.g. `claude-sonnet-4-5-20250929`) resolve to current pricing automatically.
 
@@ -84,13 +83,16 @@ Key settings:
 - `poll_interval`: how often to poll provider APIs (default: `5m`)
 - `defaults.monthly_budget_usd`: your monthly budget for projections
 - `defaults.alert_thresholds`: % thresholds for notifications (default: `[50, 75, 90, 100]`)
-- `web.listen`: web dashboard address (default: `127.0.0.1:7878`)
+- `proxy.*`: live-tracking proxy (see above)
+- `pricing.source`: dynamic price catalog URL (default OpenRouter's public models API; `""` disables)
 
-> **Note:** pricing currently uses built-in defaults (`internal/cost.DefaultPrices`).
-> The `prices:` section in `config.example.yaml` documents the intended override
-> schema but is not yet loaded — config-driven pricing is a planned change.
+> **Pricing is dynamic.** Model prices are fetched from OpenRouter's public model
+> catalog (no auth) on daemon start, cached to `<db-dir>/prices.json`, and
+> refreshed daily — falling back to a bundled table offline. No manual price
+> tracking or recompiles. (OpenRouter-proxied traffic doesn't need it — cost comes
+> straight from the response.)
 
-API keys are stored in your OS keychain via `go-keyring` — never in the config file.
+Polling API keys are stored in your OS keychain via `go-keyring` — never in the config file. Proxy mode forwards your inference key and stores nothing.
 
 ## Architecture
 
@@ -124,12 +126,12 @@ See `docs/plan.md` for the full implementation plan.
 
 ## Provider Support
 
-| Provider                  | Endpoint                                                                                         | Status                                                                                        |
-| ------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/usage_report/claude_code` | **Working** — requires Admin API key, covers API + Claude Code costs, includes cache tracking |
-| OpenRouter                | `GET /api/v1/activity`                                                                           | **Working** — requires a provisioning key (openrouter.ai/settings/provisioning-keys); per-day, per-model cost + tokens |
+| Provider                  | Endpoint                                                                                         | Status                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Anthropic                 | `GET /v1/organizations/usage_report/messages` + `GET /v1/organizations/usage_report/claude_code` | **Working** — requires Admin API key, covers API + Claude Code costs, includes cache tracking                                                                      |
+| OpenRouter                | `GET /api/v1/activity`                                                                           | **Working** — requires a provisioning key (openrouter.ai/settings/provisioning-keys); per-day, per-model cost + tokens                                             |
 | OpenAI                    | `GET /v1/organization/costs`                                                                     | **Working** — requires an Admin key (`platform.openai.com/settings/organization/admin-keys`, self-serve incl. personal accounts); per-day, per-model cost + tokens |
-| Ollama / vLLM / LM Studio | N/A (no billing API)                                                                             | No polling, but **proxy mode works** — add a `proxy.upstreams` entry pointing at the local OpenAI-compatible server |
+| Ollama / vLLM / LM Studio | N/A (no billing API)                                                                             | No polling, but **proxy mode works** — add a `proxy.upstreams` entry pointing at the local OpenAI-compatible server                                                |
 
 ## Development
 

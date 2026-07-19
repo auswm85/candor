@@ -381,7 +381,7 @@ tt status                   # daemon health, last poll time, DB size
 
 ### M5 — Polish & Release (2 days) — partial
 
-- [ ] Config-driven pricing override + `tt prices diff` (scrape provider pricing pages)
+- [x] Dynamic pricing — fetch from OpenRouter's public catalog on start, cache to disk, refresh daily, fall back to bundled defaults offline (supersedes the manual `prices:` override + `tt prices diff` plan; no manual tracking)
 - [ ] goreleaser config (Homebrew tap, dmg, deb)
 - [x] README with install/quickstart
 - [x] CLAUDE.md following flowbee conventions
@@ -427,18 +427,5 @@ the existing cost engine, store, TUI, and alerts.
 | OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
 | Cache-read vs cache-write breakdown not available in aggregate endpoint | Medium   | OpenAI's `/v1/organization/costs` returns `usage_type: cached_tokens` — verify in M0.                                             |
 | Pricing drift (providers change prices)                                 | Medium   | `tt prices diff` command, no auto-update.                                                                                         |
-| Go learning curve (no existing Go projects in this directory)           | Medium   | Stick to stdlib where possible; budget 2 extra days in M1 for ramp-up.                                                            |
 | TUI snapshot tests brittle                                              | Low      | Use `teatest` golden files, review diffs in PR.                                                                                   |
 | OS keyring cross-platform edge cases                                    | Low      | `zalando/go-keyring` well-maintained; fallback to env var with warning.                                                           |
-
-## 14. Alternatives Considered
-
-- **Rust + Tauri** (matches flowbee stack): would reuse existing skills. Rejected because long-running daemon + SQLite + polling is simpler in Go, and a bubbletea TUI is a better fit for a dev tool than a full Tauri desktop app.
-- **TypeScript + Next.js** (matches hypelnk stack): Next.js is a poor fit for a background daemon. Would need separate Node daemon + Next dashboard — two processes.
-- **Pure CLI (no daemon)**: rejected because projection and alerts need continuous state; one-shot polling would hit provider rate limits.
-
-## 15. Open Questions (for the user)
-
-1. **Module path:** `github.com/auswm85/token-tracker` or different?
-2. **GitHub repo:** public or private? (Affects Homebrew tap publishing.)
-3. **v1.1 proxy decision:** defer or decide now?
