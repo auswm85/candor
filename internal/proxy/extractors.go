@@ -39,6 +39,19 @@ func extractorFor(provider string) Extractor {
 	}
 }
 
+// asBool coerces a decoded JSON value to bool, tolerating a string "true" (some
+// clients send `"stream": "true"`) so a streaming request isn't misread as
+// non-streaming and its usage silently dropped.
+func asBool(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return t == "true"
+	}
+	return false
+}
+
 func sseData(line []byte) ([]byte, bool) {
 	if !bytes.HasPrefix(line, []byte("data:")) {
 		return nil, false
@@ -101,10 +114,10 @@ func (openAIExtractor) PrepareRequestBody(body []byte) []byte {
 		return body
 	}
 	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body
+	if err := json.Unmarshal(body, &m); err != nil || m == nil {
+		return body // not a JSON object (e.g. "null") — nothing to inject
 	}
-	if streaming, _ := m["stream"].(bool); !streaming {
+	if !asBool(m["stream"]) {
 		return body
 	}
 	opts, _ := m["stream_options"].(map[string]any)
@@ -147,8 +160,8 @@ func (openRouterExtractor) PrepareRequestBody(body []byte) []byte {
 		return body
 	}
 	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body
+	if err := json.Unmarshal(body, &m); err != nil || m == nil {
+		return body // not a JSON object (e.g. "null") — nothing to inject
 	}
 	// {"usage": {"include": true}} → OpenRouter returns usage.cost.
 	usage, _ := m["usage"].(map[string]any)
@@ -158,7 +171,7 @@ func (openRouterExtractor) PrepareRequestBody(body []byte) []byte {
 	usage["include"] = true
 	m["usage"] = usage
 	// Streaming responses also need a final usage chunk.
-	if streaming, _ := m["stream"].(bool); streaming {
+	if asBool(m["stream"]) {
 		opts, _ := m["stream_options"].(map[string]any)
 		if opts == nil {
 			opts = map[string]any{}

@@ -2,6 +2,7 @@ package pricing
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,7 +51,7 @@ func TestFetch_MapsAndNormalizes(t *testing.T) {
 	// End to end: a dated Claude Code model resolves via the engine.
 	eng := cost.New(prices)
 	got := eng.Compute("anthropic", "claude-sonnet-4-5-20250929", 1_000_000, 0, 0, 1_000_000)
-	if got != 18.0 { // 1M input @3 + 1M output @15
+	if math.Abs(got-18.0) > 1e-9 { // 1M input @3 + 1M output @15
 		t.Errorf("engine cost = %v, want 18.0", got)
 	}
 }

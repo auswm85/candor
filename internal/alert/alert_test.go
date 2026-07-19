@@ -14,7 +14,7 @@ func newTestChecker(t *testing.T, budget float64, thresholds []int) *Checker {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if _, err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{}

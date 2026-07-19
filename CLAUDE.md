@@ -22,6 +22,7 @@ go run ./cmd/candor run -- claude   # run a harness routed through the proxy (pe
 go run ./cmd/candor proxy           # run the proxy headless (for a background service); also fires budget alerts
 go run ./cmd/candor tui             # dashboard as a read-only viewer, attached to a running proxy via /stats
 go run ./cmd/candor spend today     # today's spend  (also: spend month --by-model)
+go run ./cmd/candor export --since 2026-01-01 --format csv|json   # export raw usage rows to stdout
 go run ./cmd/candor status          # db size, today/month spend, whether the proxy is running
 go run ./cmd/candor service         # print a launchd/systemd unit that runs `candor proxy`
 go run ./cmd/candor migrate         # run pending migrations

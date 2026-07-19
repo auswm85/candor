@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,7 +51,7 @@ func openStore() (*config.Config, *store.Store, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open store: %w", err)
 	}
-	if err := st.Migrate(); err != nil {
+	if _, err := st.Migrate(); err != nil {
 		_ = st.Close()
 		return nil, nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -324,6 +327,102 @@ Examples:
 	},
 }
 
+var exportCmd = &cobra.Command{
+	Use:   "export --since <YYYY-MM-DD> [--until <YYYY-MM-DD>] [--format csv|json]",
+	Short: "Export raw usage rows to stdout (CSV or JSON)",
+	Long: `Dump recorded usage rows for analysis or reimbursement.
+
+  candor export --since 2026-01-01 > jan.csv
+  candor export --since 2026-01-01 --until 2026-01-31 --format json
+
+--until is inclusive (covers the whole day); omit it to export up to now.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sinceStr, _ := cmd.Flags().GetString("since")
+		untilStr, _ := cmd.Flags().GetString("until")
+		format, _ := cmd.Flags().GetString("format")
+		if sinceStr == "" {
+			return errors.New("--since is required (YYYY-MM-DD)")
+		}
+		if format != "csv" && format != "json" {
+			return fmt.Errorf("unknown --format %q (use csv or json)", format)
+		}
+		since, err := time.ParseInLocation("2006-01-02", sinceStr, time.Local)
+		if err != nil {
+			return fmt.Errorf("parse --since: %w", err)
+		}
+		var until time.Time
+		if untilStr != "" {
+			u, err := time.ParseInLocation("2006-01-02", untilStr, time.Local)
+			if err != nil {
+				return fmt.Errorf("parse --until: %w", err)
+			}
+			until = u.AddDate(0, 0, 1) // inclusive of the --until day
+		}
+
+		_, st, err := openStore()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = st.Close() }()
+
+		rows, err := st.ExportRows(since, until)
+		if err != nil {
+			return fmt.Errorf("export: %w", err)
+		}
+		if format == "json" {
+			return writeExportJSON(os.Stdout, rows)
+		}
+		return writeExportCSV(os.Stdout, rows)
+	},
+}
+
+func writeExportCSV(w io.Writer, rows []store.ExportRow) error {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"bucket_start", "provider", "model", "input", "cache_read", "cache_write", "output", "cost_usd"})
+	for _, r := range rows {
+		_ = cw.Write([]string{
+			r.BucketStart.UTC().Format(time.RFC3339),
+			r.Provider, r.Model,
+			strconv.FormatInt(r.Input, 10),
+			strconv.FormatInt(r.CacheRead, 10),
+			strconv.FormatInt(r.CacheWrite, 10),
+			strconv.FormatInt(r.Output, 10),
+			strconv.FormatFloat(r.CostUSD, 'f', 6, 64),
+		})
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+func writeExportJSON(w io.Writer, rows []store.ExportRow) error {
+	type tokens struct {
+		Input      int64 `json:"input"`
+		CacheRead  int64 `json:"cache_read"`
+		CacheWrite int64 `json:"cache_write"`
+		Output     int64 `json:"output"`
+	}
+	type rec struct {
+		BucketStart string  `json:"bucket_start"`
+		Provider    string  `json:"provider"`
+		Model       string  `json:"model"`
+		Tokens      tokens  `json:"tokens"`
+		CostUSD     float64 `json:"cost_usd"`
+	}
+	out := make([]rec, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, rec{
+			BucketStart: r.BucketStart.UTC().Format(time.RFC3339),
+			Provider:    r.Provider,
+			Model:       r.Model,
+			Tokens:      tokens{r.Input, r.CacheRead, r.CacheWrite, r.Output},
+			CostUSD:     r.CostUSD,
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show database size, spend, and whether the proxy is running",
@@ -350,30 +449,80 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("query month's spend: %w", err)
 		}
 
+		projected := app.ProjectMonthValue(month, now)
+		budget := cfg.Defaults.MonthlyBudgetUSD
+
 		listen := app.ProxyListen(cfg)
-		proxyState := "not running"
-		if app.ProxyHealthy(listen, 300*time.Millisecond) {
-			proxyState = "running at http://" + listen
+		proxyUp := app.ProxyHealthy(listen, 300*time.Millisecond)
+
+		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+			rep := map[string]any{
+				"database":      cfg.Database,
+				"db_size_bytes": dbSize(cfg.Database),
+				"proxy_up":      proxyUp,
+				"today_usd":     today,
+				"month_usd":     month,
+				"projected_usd": projected,
+			}
+			if proxyUp {
+				rep["proxy_url"] = "http://" + listen
+			}
+			if budget > 0 {
+				rep["budget_usd"] = budget
+				rep["budget_used_pct"] = projected / budget * 100
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(rep)
 		}
 
+		proxyState := "not running"
+		if proxyUp {
+			proxyState = "running at http://" + listen
+		}
 		fmt.Printf("Database:    %s (%s)\n", cfg.Database, size)
 		fmt.Printf("Proxy:       %s\n", proxyState)
 		fmt.Printf("Today:       $%.2f\n", today)
 		fmt.Printf("This month:  $%.2f\n", month)
+		if budget > 0 {
+			fmt.Printf("Projected:   $%.2f  (%.0f%% of $%.0f budget)\n", projected, projected/budget*100, budget)
+		} else {
+			fmt.Printf("Projected:   $%.2f\n", projected)
+		}
 		return nil
 	},
+}
+
+// dbSize returns the database file size in bytes, or 0 if unavailable.
+func dbSize(path string) int64 {
+	if fi, err := os.Stat(path); err == nil {
+		return fi.Size()
+	}
+	return 0
 }
 
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Apply pending database migrations",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, st, err := openStore()
+		cfg, err := config.Load()
 		if err != nil {
-			return err
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
 		}
 		defer func() { _ = st.Close() }()
-		fmt.Printf("Migrations applied. Database: %s\n", cfg.Database)
+		applied, err := st.Migrate()
+		if err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		if applied == 0 {
+			fmt.Printf("Already up to date. Database: %s\n", cfg.Database)
+		} else {
+			fmt.Printf("%d migration(s) applied. Database: %s\n", applied, cfg.Database)
+		}
 		return nil
 	},
 }
@@ -476,8 +625,12 @@ func main() {
 	runCmd.Flags().SetInterspersed(false)
 	runCmd.Flags().StringSlice("provider", nil, "Provider base URLs to route (default: all configured); repeatable")
 	spendCmd.Flags().Bool("by-model", false, "Break spend down by model")
+	exportCmd.Flags().String("since", "", "Start date, inclusive (YYYY-MM-DD) — required")
+	exportCmd.Flags().String("until", "", "End date, inclusive (YYYY-MM-DD); default: now")
+	exportCmd.Flags().String("format", "csv", "Output format: csv or json")
+	statusCmd.Flags().Bool("json", false, "Output status as JSON")
 
-	rootCmd.AddCommand(proxyCmd, runCmd, tuiCmd, spendCmd, statusCmd, migrateCmd, serviceCmd)
+	rootCmd.AddCommand(proxyCmd, runCmd, tuiCmd, spendCmd, exportCmd, statusCmd, migrateCmd, serviceCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

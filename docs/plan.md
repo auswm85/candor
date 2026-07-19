@@ -18,7 +18,8 @@ surfaces everything in a full-screen terminal dashboard.
 - **No privileged keys.** The proxy forwards the harness's own inference key and
   stores nothing. There are no admin/management keys to configure.
 - **Never break the request.** Usage tapping is fail-open and runs after the
-  client's bytes are forwarded; a parser bug costs a metric, not a response.
+  client's bytes are forwarded; a parser bug costs a metric, not a response. (The
+  optional budget hard cutoff in §9 is the sole, opt-in exception — off by default.)
 - **First-party fidelity.** Anthropic request bodies are forwarded byte-for-byte
   so prompt caching (and first-party classification) is preserved.
 
@@ -165,46 +166,59 @@ tabbed main panel:
 - [x] Timer-based budget projection + OS notifications (macOS/Linux/Windows).
 - [x] Alert history (`alert_events`) — fired notifications logged and shown on the Alerts tab.
 - [x] Single-binary consolidation; single-instance lock.
+- [x] Code-review hardening — fail-open PowerShell notification fix, surfaced DB
+      errors in `status`, dead-code removal, and month-length-aware projection
+      consolidated into `app.ProjectMonthValue`.
+- [x] `candor export --since/--until --format csv|json` (raw usage to stdout) via
+      `store.ExportRows`; first `cmd/candor` tests.
+- [x] `config.Validate()` (rejects bad budgets/thresholds), `candor status --json`
+      + projected/budget-% enrichment, `migrate` reports the applied count, and
+      the remaining review nits (defensive `stream` parse, float-tolerance test).
+- [x] Test hygiene — end-to-end proxy → store → `/stats` coverage, `cmd/candor`
+      CLI tests, and extractor **fuzzing** (which found + fixed a nil-map panic on
+      a `null` request body).
 
 ## 9. Roadmap
 
-**Near-term**
+Ranked by fit with candor's mission — a **local, passive, live cost tracker**.
+candor was just simplified (polling + web dashboard removed), so the bar for new
+surface area is high.
 
-- Per-request event log / drill-down (persist the recorder ring for history).
-- `candor doctor` — verify the proxy is up and a harness is correctly routed.
-- Onboarding-free first run polish: clearer empty-state "point a harness here".
-- goreleaser (Homebrew tap, deb, signed macOS binary); `v0.1.0` tag.
+### Tier 1 — complete
 
-**Subscription-safe capture (the honest gap)**
+All Tier 1 items are shipped — see §8. (Export, `config.Validate`, `status
+--json`, review nits, and test hygiene — including extractor fuzzing, which
+caught a real nil-map panic on a `null` request body.)
 
-The proxy is ideal for **API-billed** traffic. For Claude Code **subscription**
-(OAuth) logins, routing through any proxy carries a small, undocumented risk of
-being reclassified as third-party. A first-party capture path would serve that
-audience without the risk:
+### Tier 2 — worthwhile, medium
 
-- Read Claude Code's own statusline `rate_limits`/usage payload (zero
-  interposition — lowest risk), or
-- An in-process `fetch()`-hook launcher (cccost-style) for full-fidelity live
-  per-request data while staying genuinely first-party.
+- **Budget config refinement** — fractional `soft_thresholds` as a cleaner form of
+  today's `alert_thresholds`, with `monthly_budget_usd` kept as a back-compat
+  alias. Low urgency (thresholds + projection + alert history already exist).
+- **Daily digest** — one scheduled local summary notification (yesterday, MTD,
+  remaining). Marginal for a solo user with a live TUI, but harmless and local.
+- **Log rotation** — rotate `daemon.log` (~10 MB, keep 3) for an always-on
+  `candor proxy` service.
 
-**Later**
+### Tier 3 — niche / opt-in
 
-- OpenAI-compatible local providers via proxy (Ollama, vLLM, LM Studio).
-- Project/session tagging; CSV/Parquet export; weekly digest.
-- Additional alert channels (Slack, email).
+- **Budget hard cutoff — opt-in only.** Off by default, behind an explicit config
+  flag, with loud warnings and an allowlist. When enabled, the proxy returns
+  `429` before forwarding once the monthly total exceeds the limit. This is the
+  **sole, deliberate exception** to "never break the request", active only when
+  the user turns it on — candor is a tracker, not an enforcement/routing tool.
+- **History tab polish** — filter (`/`), sort (`s`), and a per-row detail pane.
+  UI nicety; low priority.
 
-## 10. Dropped / non-goals (history)
+### First-party subscription capture (still the strategic gap)
 
-- **Polling mode** — pulling provider billing APIs on an interval. Removed: it
-  required privileged admin/provisioning keys, was delayed and coarse (OpenRouter
-  refuses the current UTC day), and was off-message for a live-tracking tool. The
-  proxy covers the live use case; git history retains the adapters if ever needed.
-- **Embedded web dashboard** — a SvelteKit static UI. Dropped: the TUI already
-  covers spend, top models, cache impact, history, and alerts, and a browser view
-  would add a Node toolchain for a read-only duplicate. (If ever wanted, the cheap
-  path is one HTML page + a JSON endpoint on the proxy's existing HTTP server.)
+The proxy is safe for API-billed traffic, but Claude Code
+**subscription** (OAuth) users are better served by a first-party method (read
+Claude Code's statusline `rate_limits`, or a `fetch()`-hook launcher) to avoid
+the third-party-reclassification risk. Larger effort; revisit when subscription
+support matters.
 
-## 11. Risks & mitigations
+## 10. Risks & mitigations
 
 | Risk                                                          | Mitigation                                                                                                                                 |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |

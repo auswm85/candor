@@ -20,7 +20,7 @@ func newProxy(t *testing.T, provider, upstream string) (*Proxy, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if _, err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	prices := cost.Prices{
@@ -61,7 +61,7 @@ func TestProxy_RequestBodyTooLarge(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(); err != nil {
+	if _, err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	p := NewProxy(map[string]string{"openai": upstream.URL}, NewRecorder(st, cost.New(nil)), 64) // 64-byte cap

@@ -15,7 +15,7 @@ func TestStore_InsertAndQuery(t *testing.T) {
 	defer s.Close()
 	defer os.Remove(path)
 
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,11 +60,11 @@ func TestStore_MigrateIdempotent(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatalf("first migrate: %v", err)
 	}
 	// Running again must not fail (schema already applied).
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
 }
@@ -76,7 +76,7 @@ func TestStore_UpsertAndByModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,7 +133,7 @@ func TestStore_DailyCostSince(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,7 +176,7 @@ func TestStore_ModelUsageSince(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	pid, _ := s.ProviderID("anthropic")
@@ -205,13 +205,62 @@ func TestStore_ModelUsageSince(t *testing.T) {
 	}
 }
 
+func TestStore_ExportRows(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := s.ProviderID("openrouter")
+	mid, _ := s.ModelID(pid, "deepseek-chat")
+
+	jan01 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	jan15 := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	feb01 := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	for _, bs := range []time.Time{jan01, jan15, feb01} {
+		if err := s.AddUsage(UsageRow{ProviderID: pid, ModelID: mid, BucketStart: bs, BucketEnd: bs.Add(time.Minute),
+			InputTokens: 100, CachedInputTokens: 20, CacheWriteTokens: 5, OutputTokens: 50, CostUSD: 0.01}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// January only: [Jan 1, Feb 1) → 2 rows, oldest first, Feb excluded.
+	rows, err := s.ExportRows(jan01, feb01)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2 (Feb excluded): %+v", len(rows), rows)
+	}
+	if !rows[0].BucketStart.Equal(jan01) || rows[1].BucketStart.Before(rows[0].BucketStart) {
+		t.Errorf("rows not oldest-first: %+v", rows)
+	}
+	r := rows[0]
+	if r.Provider != "openrouter" || r.Model != "deepseek-chat" ||
+		r.Input != 100 || r.CacheRead != 20 || r.CacheWrite != 5 || r.Output != 50 {
+		t.Errorf("row fields = %+v", r)
+	}
+
+	// Zero until → no upper bound → all 3.
+	all, err := s.ExportRows(jan01, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("open-ended export got %d rows, want 3", len(all))
+	}
+}
+
 func TestStore_TotalTokensSince(t *testing.T) {
 	s, err := Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	pid, _ := s.ProviderID("openai")
@@ -239,7 +288,7 @@ func TestStore_AlertEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
+	if _, err := s.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 

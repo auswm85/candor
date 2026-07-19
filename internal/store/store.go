@@ -64,17 +64,19 @@ func (s *Store) Close() error {
 // Migrate applies any embedded SQL migrations that have not yet run. Each file
 // is executed once, inside a transaction, and recorded in schema_migrations so
 // subsequent calls are idempotent.
-func (s *Store) Migrate() error {
+// Migrate returns the number of migrations newly applied by this call (0 when
+// already up to date).
+func (s *Store) Migrate() (int, error) {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`); err != nil {
-		return fmt.Errorf("ensure schema_migrations: %w", err)
+		return 0, fmt.Errorf("ensure schema_migrations: %w", err)
 	}
 
 	entries, err := fs.ReadDir(db.MigrationFiles, "migrations")
 	if err != nil {
-		return fmt.Errorf("read migrations: %w", err)
+		return 0, fmt.Errorf("read migrations: %w", err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -84,39 +86,41 @@ func (s *Store) Migrate() error {
 	}
 	sort.Strings(names)
 
+	count := 0
 	for _, name := range names {
-		var applied int
+		var exists int
 		if err := s.db.QueryRow(
 			`SELECT count(*) FROM schema_migrations WHERE version = ?`, name,
-		).Scan(&applied); err != nil {
-			return fmt.Errorf("check migration %s: %w", name, err)
+		).Scan(&exists); err != nil {
+			return count, fmt.Errorf("check migration %s: %w", name, err)
 		}
-		if applied > 0 {
+		if exists > 0 {
 			continue
 		}
 
 		sqlBytes, err := fs.ReadFile(db.MigrationFiles, "migrations/"+name)
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
+			return count, fmt.Errorf("read migration %s: %w", name, err)
 		}
 
 		tx, err := s.db.Begin()
 		if err != nil {
-			return fmt.Errorf("begin %s: %w", name, err)
+			return count, fmt.Errorf("begin %s: %w", name, err)
 		}
 		if _, err := tx.Exec(string(sqlBytes)); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("apply %s: %w", name, err)
+			return count, fmt.Errorf("apply %s: %w", name, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("record %s: %w", name, err)
+			return count, fmt.Errorf("record %s: %w", name, err)
 		}
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit %s: %w", name, err)
+			return count, fmt.Errorf("commit %s: %w", name, err)
 		}
+		count++
 	}
-	return nil
+	return count, nil
 }
 
 // ProviderID returns the row id for a provider name, inserting it if absent.
@@ -405,6 +409,54 @@ type ModelCost struct {
 	Provider string
 	Model    string
 	CostUSD  float64
+}
+
+// ExportRow is one raw per-minute usage bucket, joined with provider/model
+// names, for data export.
+type ExportRow struct {
+	BucketStart time.Time
+	Provider    string
+	Model       string
+	Input       int64
+	CacheRead   int64
+	CacheWrite  int64
+	Output      int64
+	CostUSD     float64
+}
+
+// ExportRows returns raw usage rows in [since, until), oldest first. A zero
+// until means "no upper bound".
+func (s *Store) ExportRows(since, until time.Time) ([]ExportRow, error) {
+	if until.IsZero() {
+		until = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	rows, err := s.db.Query(`
+		SELECT u.bucket_start, p.name, m.name,
+		       u.input_tokens, u.cached_input_tokens, u.cache_write_tokens,
+		       u.output_tokens, u.cost_usd
+		FROM usage_records u
+		JOIN providers p ON p.id = u.provider_id
+		JOIN models    m ON m.id = u.model_id
+		WHERE u.bucket_start >= ? AND u.bucket_start < ?
+		ORDER BY u.bucket_start ASC
+	`, since.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ExportRow
+	for rows.Next() {
+		var r ExportRow
+		var start string
+		if err := rows.Scan(&start, &r.Provider, &r.Model,
+			&r.Input, &r.CacheRead, &r.CacheWrite, &r.Output, &r.CostUSD); err != nil {
+			return nil, err
+		}
+		r.BucketStart, _ = time.Parse(time.RFC3339, start)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // CostByModelSince returns total cost grouped by model since the given time,

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -72,5 +73,25 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// Validate rejects obviously-wrong settings so problems surface at startup
+// rather than as silent misbehavior.
+func (c *Config) Validate() error {
+	if c.Defaults.MonthlyBudgetUSD < 0 {
+		return fmt.Errorf("defaults.monthly_budget_usd must be >= 0, got %v", c.Defaults.MonthlyBudgetUSD)
+	}
+	for _, t := range c.Defaults.AlertThresholds {
+		if t <= 0 || t > 1000 {
+			return fmt.Errorf("defaults.alert_thresholds: %d%% out of range (expected 1–1000)", t)
+		}
+	}
+	if c.Proxy.MaxBodyBytes < 0 {
+		return fmt.Errorf("proxy.max_body_bytes must be >= 0, got %d", c.Proxy.MaxBodyBytes)
+	}
+	return nil
 }
