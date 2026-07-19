@@ -1,9 +1,22 @@
 package cost
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
+
+// modelDateSuffix matches a trailing model snapshot date, e.g. the "-20250929"
+// in "claude-sonnet-4-5-20250929" or the "-2024-08-06" in "gpt-4o-2024-08-06".
+var modelDateSuffix = regexp.MustCompile(`-(\d{8}|\d{4}-\d{2}-\d{2})$`)
+
+// normalizeModel maps the dated/prefixed model IDs that coding harnesses send
+// to the base IDs used in the price tables. Claude Code sends dated snapshots
+// (claude-sonnet-4-5-20250929) and the poll path uses a "claude-code/" prefix.
+func normalizeModel(model string) string {
+	model = strings.TrimPrefix(model, "claude-code/")
+	return modelDateSuffix.ReplaceAllString(model, "")
+}
 
 type ModelPrice struct {
 	InputPer1M       float64
@@ -29,11 +42,9 @@ func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cache
 	}
 	p, ok := modelPrices[model]
 	if !ok {
-		// Claude Code usage is reported as "claude-code/<model>"; fall back to
-		// the underlying model's pricing so those rows still get costed.
-		if trimmed := strings.TrimPrefix(model, "claude-code/"); trimmed != model {
-			p, ok = modelPrices[trimmed]
-		}
+		// Fall back to the normalized ID (dated snapshot / claude-code prefix
+		// stripped) so proxied harness traffic still gets costed.
+		p, ok = modelPrices[normalizeModel(model)]
 	}
 	if !ok {
 		return 0
@@ -60,16 +71,28 @@ func (e *Engine) Breakdown(prices Prices) map[string]map[string]float64 {
 }
 
 // DefaultPrices returns built-in pricing (USD per 1M tokens) used when the
-// config file does not override a provider/model. Values reflect published
-// list prices and can drift; `tt prices diff` is the intended reconciliation
-// path once implemented.
+// config file does not override a provider/model. Cache-read is ~0.1x input and
+// 5-minute cache-write is ~1.25x input. Values reflect published list prices as
+// of mid-2026 and can drift; `tt prices diff` is the intended reconciliation
+// path once implemented. Dated snapshot IDs (e.g. claude-sonnet-4-5-20250929)
+// resolve to these base entries via model normalization.
 func DefaultPrices() Prices {
 	return Prices{
 		"anthropic": {
-			"claude-opus-4-1":   {InputPer1M: 15.00, CachedInputPer1M: 1.50, CacheWritePer1M: 18.75, OutputPer1M: 75.00},
-			"claude-opus-4-5":   {InputPer1M: 5.00, CachedInputPer1M: 0.50, CacheWritePer1M: 6.25, OutputPer1M: 25.00},
+			// Opus tier ($5 / $25)
+			"claude-opus-4-8": {InputPer1M: 5.00, CachedInputPer1M: 0.50, CacheWritePer1M: 6.25, OutputPer1M: 25.00},
+			"claude-opus-4-7": {InputPer1M: 5.00, CachedInputPer1M: 0.50, CacheWritePer1M: 6.25, OutputPer1M: 25.00},
+			"claude-opus-4-6": {InputPer1M: 5.00, CachedInputPer1M: 0.50, CacheWritePer1M: 6.25, OutputPer1M: 25.00},
+			"claude-opus-4-5": {InputPer1M: 5.00, CachedInputPer1M: 0.50, CacheWritePer1M: 6.25, OutputPer1M: 25.00},
+			"claude-opus-4-1": {InputPer1M: 15.00, CachedInputPer1M: 1.50, CacheWritePer1M: 18.75, OutputPer1M: 75.00},
+			// Sonnet tier ($3 / $15)
+			"claude-sonnet-5":   {InputPer1M: 3.00, CachedInputPer1M: 0.30, CacheWritePer1M: 3.75, OutputPer1M: 15.00},
+			"claude-sonnet-4-6": {InputPer1M: 3.00, CachedInputPer1M: 0.30, CacheWritePer1M: 3.75, OutputPer1M: 15.00},
 			"claude-sonnet-4-5": {InputPer1M: 3.00, CachedInputPer1M: 0.30, CacheWritePer1M: 3.75, OutputPer1M: 15.00},
-			"claude-haiku-4-5":  {InputPer1M: 1.00, CachedInputPer1M: 0.10, CacheWritePer1M: 1.25, OutputPer1M: 5.00},
+			// Haiku tier ($1 / $5)
+			"claude-haiku-4-5": {InputPer1M: 1.00, CachedInputPer1M: 0.10, CacheWritePer1M: 1.25, OutputPer1M: 5.00},
+			// Fable tier ($10 / $50)
+			"claude-fable-5": {InputPer1M: 10.00, CachedInputPer1M: 1.00, CacheWritePer1M: 12.50, OutputPer1M: 50.00},
 		},
 		"openai": {
 			"gpt-4o":      {InputPer1M: 2.50, CachedInputPer1M: 0.3125, CacheWritePer1M: 3.125, OutputPer1M: 10.00},

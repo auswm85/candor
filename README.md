@@ -73,7 +73,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:7879/anthropic claude
 
 Notes:
 - Requires a harness that supports a custom base URL (Claude Code, OpenCode, Aider, Cline, …). Tools that hardcode their endpoint can't be proxied.
-- On an API key, cost is priced by the engine. On a subscription (OAuth) login, token/cache counts are still captured, but per-token dollar cost isn't billed (API-equivalent cost estimation is planned).
+- On an API key, the engine prices the captured tokens — **actual cost**. On a subscription (Pro/Max OAuth) login there's no per-token billing, so the same figure is an **API-equivalent estimate**: what that usage would cost at list price. Token and cache counts are accurate either way, and dated model IDs (e.g. `claude-sonnet-4-5-20250929`) resolve to current pricing automatically.
 
 ## Configuration
 

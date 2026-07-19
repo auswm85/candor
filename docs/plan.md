@@ -399,7 +399,7 @@ the existing cost engine, store, TUI, and alerts.
 - [x] Anthropic protocol extraction (`/v1/messages`, cache_read/cache_creation; split-across-events streaming) — enables Claude Code + OpenCode-with-Claude
 - [x] Run proxy inside the main daemon alongside the TUI (`proxy.enabled: true`)
 - [ ] Per-request event log / drill-down
-- [ ] Cost handling for subscription (OAuth) harnesses — token counts with estimated API-equivalent cost
+- [x] Cost handling for subscription (OAuth) harnesses — API-equivalent list-price estimate from captured tokens, with model-name normalization (dated snapshots → base pricing) and current Opus/Sonnet/Haiku/Fable + GPT-4o prices in `DefaultPrices`
 
 ### v1.1 stretch goals
 

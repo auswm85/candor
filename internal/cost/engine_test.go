@@ -106,6 +106,35 @@ func TestEngine_ProjectMonthly(t *testing.T) {
 	}
 }
 
+func TestEngine_DatedModelResolvesToPricing(t *testing.T) {
+	e := New(DefaultPrices())
+
+	// Claude Code sends dated snapshot IDs; they must resolve to base pricing.
+	// 1M input @ $3 + 1M output @ $15 = $18.00 for claude-sonnet-4-5.
+	got := e.Compute("anthropic", "claude-sonnet-4-5-20250929", 1_000_000, 0, 0, 1_000_000)
+	if abs(got-18.00) > 0.0001 {
+		t.Errorf("dated sonnet = %v, want 18.00", got)
+	}
+
+	// claude-code/ prefix (poll path) also resolves.
+	got = e.Compute("anthropic", "claude-code/claude-opus-4-8", 1_000_000, 0, 0, 0)
+	if abs(got-5.00) > 0.0001 {
+		t.Errorf("claude-code opus = %v, want 5.00", got)
+	}
+
+	// OpenAI dated snapshot resolves to base gpt-4o.
+	got = e.Compute("openai", "gpt-4o-2024-08-06", 1_000_000, 0, 0, 0)
+	if abs(got-2.50) > 0.0001 {
+		t.Errorf("dated gpt-4o = %v, want 2.50", got)
+	}
+
+	// Cache tokens price at their own rates (opus: read 0.50, write 6.25).
+	got = e.Compute("anthropic", "claude-opus-4-8", 0, 1_000_000, 1_000_000, 0)
+	if abs(got-6.75) > 0.0001 {
+		t.Errorf("opus cache = %v, want 6.75", got)
+	}
+}
+
 func abs(f float64) float64 {
 	if f < 0 {
 		return -f
