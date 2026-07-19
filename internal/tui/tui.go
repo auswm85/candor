@@ -83,6 +83,7 @@ type model struct {
 	projected    float64
 	daily        []store.DayCost
 	hourly       []store.HourCost
+	tokens24h    int64
 	topModels    []store.ModelUsage
 	cacheSaved   float64
 	cacheExtra   float64
@@ -142,6 +143,7 @@ type spendMsg struct {
 	projected    float64
 	daily        []store.DayCost
 	hourly       []store.HourCost
+	tokens24h    int64
 	topModels    []store.ModelUsage
 	cacheSaved   float64
 	cacheExtra   float64
@@ -185,6 +187,10 @@ func (m model) loadSpend() tea.Msg {
 	if err != nil {
 		return spendMsg{err: err}
 	}
+	tokens24h, err := m.store.TotalTokensSince(now.Add(-24 * time.Hour))
+	if err != nil {
+		return spendMsg{err: err}
+	}
 
 	// Project the month forward at the current burn rate.
 	daysElapsed := now.Sub(startOfMonth).Hours() / 24
@@ -218,8 +224,8 @@ func (m model) loadSpend() tea.Msg {
 
 	msg := spendMsg{
 		today: today, month: month, projected: projected, daily: daily, hourly: hourly,
-		topModels: usage, cacheSaved: saved, cacheExtra: extra, notified: notified,
-		recentAlerts: recentAlerts,
+		tokens24h: tokens24h, topModels: usage, cacheSaved: saved, cacheExtra: extra,
+		notified: notified, recentAlerts: recentAlerts,
 	}
 	// Live session data comes from the in-process recorder (all-in-one mode) or,
 	// when detached, from a running proxy's /stats endpoint (viewer mode).
@@ -318,6 +324,7 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projected = msg.projected
 			m.daily = msg.daily
 			m.hourly = msg.hourly
+			m.tokens24h = msg.tokens24h
 			m.topModels = msg.topModels
 			m.cacheSaved = msg.cacheSaved
 			m.cacheExtra = msg.cacheExtra
@@ -450,7 +457,11 @@ func (m model) renderLive(width int) string {
 	var b strings.Builder
 
 	// --- 24h trend sparkline ---
-	fmt.Fprintf(&b, "%s\n  %s\n", sectionHeader.Render("24h trend"), m.sparkline())
+	trend := m.sparkline()
+	if m.tokens24h > 0 {
+		trend += dimStyle.Render("  ·  " + fmtTokens(m.tokens24h) + " tokens")
+	}
+	fmt.Fprintf(&b, "%s\n  %s\n", sectionHeader.Render("24h trend"), trend)
 
 	// --- Live activity feed ---
 	fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Live activity"))
@@ -459,8 +470,8 @@ func (m model) renderLive(width int) string {
 	} else {
 		for _, e := range m.feed {
 			name := e.Model
-			if len(name) > 22 {
-				name = name[:21] + "…"
+			if len(name) > 18 {
+				name = name[:17] + "…"
 			}
 			// Pad provider tag with plain spaces so ANSI color codes don't skew
 			// column alignment.
@@ -468,8 +479,10 @@ func (m model) renderLive(width int) string {
 			if pad := 10 - len(e.Provider); pad > 0 {
 				prov += strings.Repeat(" ", pad)
 			}
-			fmt.Fprintf(&b, "  %s  %s  %-22s %s\n",
-				dimStyle.Render(e.At.Format("15:04:05")), prov, name, money(e.CostUSD))
+			tokens := e.Input + e.Cached + e.CacheWrite + e.Output
+			fmt.Fprintf(&b, "  %s  %s  %-18s %s  %s\n",
+				dimStyle.Render(e.At.Format("15:04:05")), prov, name,
+				dimStyle.Render(fmt.Sprintf("%7s tok", fmtTokens(tokens))), money(e.CostUSD))
 		}
 	}
 
@@ -689,6 +702,18 @@ func (m model) burnPerHour() float64 {
 }
 
 func money(v float64) string { return fmt.Sprintf("$%.2f", v) }
+
+// fmtTokens renders a token count compactly: 1.2M, 15.3k, 420.
+func fmtTokens(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
 
 // statusDot returns a colored ● — green when on, red when off.
 func statusDot(on bool) string {

@@ -215,6 +215,20 @@ func (s *Store) TotalCostSince(since time.Time) (float64, error) {
 	return total.Float64, nil
 }
 
+// TotalTokensSince returns the total tokens (input + cache-read + cache-write +
+// output) recorded since the given time.
+func (s *Store) TotalTokensSince(since time.Time) (int64, error) {
+	var total sql.NullInt64
+	err := s.db.QueryRow(`
+		SELECT SUM(input_tokens + cached_input_tokens + cache_write_tokens + output_tokens)
+		FROM usage_records WHERE bucket_start >= ?
+	`, since.Format(time.RFC3339)).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
 // DayCost is a single day's total cost. Day is "YYYY-MM-DD" (UTC bucket date).
 type DayCost struct {
 	Day     string

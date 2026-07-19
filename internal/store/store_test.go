@@ -205,6 +205,34 @@ func TestStore_ModelUsageSince(t *testing.T) {
 	}
 }
 
+func TestStore_TotalTokensSince(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := s.ProviderID("openai")
+	mid, _ := s.ModelID(pid, "gpt-4o")
+	base := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
+
+	_ = s.AddUsage(UsageRow{ProviderID: pid, ModelID: mid, BucketStart: base, BucketEnd: base.Add(time.Hour),
+		InputTokens: 1000, CachedInputTokens: 500, CacheWriteTokens: 100, OutputTokens: 200})
+	_ = s.AddUsage(UsageRow{ProviderID: pid, ModelID: mid, BucketStart: base.Add(time.Minute), BucketEnd: base.Add(time.Hour),
+		InputTokens: 300, OutputTokens: 50})
+
+	// 1800 (first row: 1000+500+100+200) + 350 (second) = 2150.
+	got, err := s.TotalTokensSince(base.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 2150 {
+		t.Fatalf("total tokens = %d, want 2150", got)
+	}
+}
+
 func TestStore_AlertEvents(t *testing.T) {
 	s, err := Open(t.TempDir() + "/test.db")
 	if err != nil {
