@@ -107,6 +107,18 @@ func (openAIExtractor) NonStreaming(body []byte) *Usage {
 
 func (openAIExtractor) NewStream() StreamAccumulator { return &openAIStream{} }
 
+// setStreamIncludeUsage sets stream_options.include_usage=true so an
+// OpenAI-compatible provider emits a final usage chunk on a streamed response
+// (it omits usage otherwise).
+func setStreamIncludeUsage(m map[string]any) {
+	opts, _ := m["stream_options"].(map[string]any)
+	if opts == nil {
+		opts = map[string]any{}
+	}
+	opts["include_usage"] = true
+	m["stream_options"] = opts
+}
+
 // PrepareRequestBody injects stream_options.include_usage=true into a streaming
 // request so OpenAI emits a final usage chunk (it omits it otherwise).
 func (openAIExtractor) PrepareRequestBody(body []byte) []byte {
@@ -120,12 +132,7 @@ func (openAIExtractor) PrepareRequestBody(body []byte) []byte {
 	if !asBool(m["stream"]) {
 		return body
 	}
-	opts, _ := m["stream_options"].(map[string]any)
-	if opts == nil {
-		opts = map[string]any{}
-	}
-	opts["include_usage"] = true
-	m["stream_options"] = opts
+	setStreamIncludeUsage(m)
 	if nb, err := json.Marshal(m); err == nil {
 		return nb
 	}
@@ -172,12 +179,7 @@ func (openRouterExtractor) PrepareRequestBody(body []byte) []byte {
 	m["usage"] = usage
 	// Streaming responses also need a final usage chunk.
 	if asBool(m["stream"]) {
-		opts, _ := m["stream_options"].(map[string]any)
-		if opts == nil {
-			opts = map[string]any{}
-		}
-		opts["include_usage"] = true
-		m["stream_options"] = opts
+		setStreamIncludeUsage(m)
 	}
 	if nb, err := json.Marshal(m); err == nil {
 		return nb

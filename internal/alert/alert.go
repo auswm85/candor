@@ -27,7 +27,7 @@ func New(cfg *config.Config, st *store.Store) *Checker {
 // crossed within a calendar month. It returns the message sent, or "" if no
 // new threshold was crossed. Repeated calls within the same month do not
 // re-notify for a threshold already alerted.
-func (c *Checker) Check(projectedMonth float64) (string, error) {
+func (c *Checker) Check(projectedMonth float64, now time.Time) (string, error) {
 	budget := c.cfg.Defaults.MonthlyBudgetUSD
 	if budget <= 0 || len(c.cfg.Defaults.AlertThresholds) == 0 {
 		return "", nil
@@ -47,7 +47,7 @@ func (c *Checker) Check(projectedMonth float64) (string, error) {
 
 	// Dedup: only fire when crossing a higher threshold than already alerted
 	// this month. The month is part of the key, so it resets automatically.
-	monthKey := "alert_notified_" + time.Now().Format("2006-01")
+	monthKey := "alert_notified_" + now.Format("2006-01")
 	prev := 0
 	if c.store != nil {
 		if v, err := c.store.GetConfigState(monthKey); err == nil && v != "" {

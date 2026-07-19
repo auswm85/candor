@@ -31,7 +31,7 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	c := newTestChecker(t, 100, []int{50, 75, 90, 100})
 
 	// Projected $80 → 80% crosses the 75 threshold (and 50).
-	msg, err := c.Check(80)
+	msg, err := c.Check(80, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	}
 
 	// Same projection again must not re-notify.
-	msg, err = c.Check(80)
+	msg, err = c.Check(80, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 	}
 
 	// Rising to 95% crosses the higher 90 threshold → notify again.
-	msg, err = c.Check(95)
+	msg, err = c.Check(95, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,10 +61,10 @@ func TestChecker_FiresOncePerThreshold(t *testing.T) {
 func TestChecker_LogsHistory(t *testing.T) {
 	c := newTestChecker(t, 100, []int{50, 75, 90, 100})
 
-	if _, err := c.Check(80); err != nil { // crosses 75
+	if _, err := c.Check(80, time.Now()); err != nil { // crosses 75
 		t.Fatal(err)
 	}
-	if _, err := c.Check(95); err != nil { // crosses 90
+	if _, err := c.Check(95, time.Now()); err != nil { // crosses 90
 		t.Fatal(err)
 	}
 
@@ -121,7 +121,7 @@ func TestChecker_DailyDigest(t *testing.T) {
 
 func TestChecker_NoBudgetNoAlert(t *testing.T) {
 	c := newTestChecker(t, 0, []int{50})
-	msg, err := c.Check(1000)
+	msg, err := c.Check(1000, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestChecker_NoBudgetNoAlert(t *testing.T) {
 
 func TestChecker_BelowAllThresholds(t *testing.T) {
 	c := newTestChecker(t, 100, []int{50, 75})
-	msg, err := c.Check(40) // 40% < lowest threshold
+	msg, err := c.Check(40, time.Now()) // 40% < lowest threshold
 	if err != nil {
 		t.Fatal(err)
 	}

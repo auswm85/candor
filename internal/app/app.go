@@ -206,7 +206,7 @@ func StartAlertLoop(ctx context.Context, cfg *config.Config, st *store.Store, in
 	check := func() {
 		now := time.Now()
 		if p, err := ProjectMonth(st, now); err == nil {
-			_, _ = checker.Check(p)
+			_, _ = checker.Check(p, now)
 		}
 		_, _ = checker.DailyDigest(now)
 	}

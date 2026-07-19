@@ -56,22 +56,15 @@ func NewProxy(upstreams map[string]string, recorder *Recorder, maxBodyBytes int6
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Liveness probe used by `tt run` / `tt doctor` to decide whether to route a
-	// child harness through the proxy. Answered before provider routing.
-	if req.URL.Path == "/healthz" {
+	switch req.URL.Path {
+	case "/healthz":
+		// Liveness probe used by `candor run` to decide whether to route a child
+		// harness through the proxy.
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 		return
-	}
-
-	// Live session stats for a detached TUI viewer attached to this proxy.
-	if req.URL.Path == "/stats" {
-		w.Header().Set("Content-Type", "application/json")
-		var s Stats
-		if p.recorder != nil {
-			s = p.recorder.Snapshot(statsFeedSize)
-		}
-		_ = json.NewEncoder(w).Encode(s)
+	case "/stats":
+		p.serveStats(w)
 		return
 	}
 
@@ -83,21 +76,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	ext := extractorFor(provider)
 
-	// Cap the request body. Read one byte past the limit so we can tell a body
-	// that's exactly at the limit from one that was truncated. (Only the request
-	// is capped — the response is streamed to the client untouched.)
-	reqReader := io.Reader(req.Body)
-	if p.maxBodyBytes > 0 {
-		reqReader = io.LimitReader(req.Body, p.maxBodyBytes+1)
-	}
-	body, err := io.ReadAll(reqReader)
-	if err != nil {
-		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if p.maxBodyBytes > 0 && int64(len(body)) > p.maxBodyBytes {
-		log.Printf("proxy: %s request body exceeds %d bytes", provider, p.maxBodyBytes)
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+	body, ok := p.readRequestBody(w, req, provider)
+	if !ok {
 		return
 	}
 	body = ext.PrepareRequestBody(body)
@@ -130,6 +110,46 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	p.forwardResponse(w, resp, provider, ext)
+}
+
+// serveStats returns the live session snapshot as JSON for a detached TUI viewer.
+func (p *Proxy) serveStats(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	var s Stats
+	if p.recorder != nil {
+		s = p.recorder.Snapshot(statsFeedSize)
+	}
+	_ = json.NewEncoder(w).Encode(s)
+}
+
+// readRequestBody reads and size-caps the request body (only the request is
+// capped — the response streams through untouched). It writes an HTTP error and
+// returns ok=false if the body is unreadable or too large. One byte past the
+// limit is read so an exactly-at-limit body is distinguishable from a truncated one.
+func (p *Proxy) readRequestBody(w http.ResponseWriter, req *http.Request, provider string) ([]byte, bool) {
+	reqReader := io.Reader(req.Body)
+	if p.maxBodyBytes > 0 {
+		reqReader = io.LimitReader(req.Body, p.maxBodyBytes+1)
+	}
+	body, err := io.ReadAll(reqReader)
+	if err != nil {
+		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	if p.maxBodyBytes > 0 && int64(len(body)) > p.maxBodyBytes {
+		log.Printf("proxy: %s request body exceeds %d bytes", provider, p.maxBodyBytes)
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
+	return body, true
+}
+
+// forwardResponse copies the upstream response to the client and taps usage +
+// rate-limit state from it. Forwarding always wins: tapping runs after the
+// client's bytes and is panic-isolated, so an extractor bug costs a metric, not
+// the user's request.
+func (p *Proxy) forwardResponse(w http.ResponseWriter, resp *http.Response, provider string, ext Extractor) {
 	for k, vs := range resp.Header {
 		if isHopByHop(k) {
 			continue
@@ -140,17 +160,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	// Capture rate-limit window state from the response headers (Anthropic plan
-	// windows, OpenAI per-minute limits). Best-effort, off the forwarding path.
+	// Rate-limit window state (Anthropic plan windows, OpenAI per-minute limits).
 	if p.recorder != nil {
 		recovering("rate limits", func() {
 			p.recorder.SetLimits(parseRateLimits(provider, resp.Header, time.Now()))
 		})
 	}
 
-	// Usage tapping is best-effort and must never break the proxied response: a
-	// bug in an extractor should cost us a metric, not the user's request. Every
-	// tap point below is isolated so forwarding continues regardless.
 	var usage *Usage
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		acc := ext.NewStream()
