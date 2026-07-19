@@ -48,7 +48,8 @@ func main() {
 	// The bubbletea TUI owns the terminal, so redirect log output to a file
 	// next to the database instead of letting it corrupt the screen.
 	logPath := filepath.Join(filepath.Dir(cfg.Database), "daemon.log")
-	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		_ = os.Chmod(logPath, 0o600) // fix perms on a pre-existing file
 		defer func() { _ = lf.Close() }()
 		log.SetOutput(lf)
 	}
@@ -66,7 +67,17 @@ func main() {
 
 	// Start the live-usage proxy alongside the TUI when enabled.
 	if cfg.Proxy.Enabled {
-		proxySrv := &http.Server{Addr: app.ProxyListen(cfg), Handler: app.BuildProxy(cfg, st), ReadHeaderTimeout: 10 * time.Second}
+		if err := app.ValidateProxyListen(app.ProxyListen(cfg), cfg.Proxy.AllowNonLoopback); err != nil {
+			log.Fatalf("proxy: %v", err)
+		}
+		proxySrv := &http.Server{
+			Addr:              app.ProxyListen(cfg),
+			Handler:           app.BuildProxy(cfg, st),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			MaxHeaderBytes:    1 << 20, // 1 MiB
+			// No WriteTimeout: streamed responses can run for many minutes.
+		}
 		go func() {
 			log.Printf("proxy listening on http://%s", proxySrv.Addr)
 			if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -75,7 +86,11 @@ func main() {
 		}()
 		go func() {
 			<-ctx.Done()
-			_ = proxySrv.Close()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := proxySrv.Shutdown(shutdownCtx); err != nil {
+				log.Printf("proxy shutdown: %v", err)
+			}
 		}()
 	}
 

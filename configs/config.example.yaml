@@ -16,6 +16,8 @@ tui:
 proxy:
   enabled: true # the daemon runs the proxy alongside the TUI; set false to disable
   listen: 127.0.0.1:7879
+  allow_nonloopback: false # refuse to bind a non-loopback address unless true (proxy forwards your keys)
+  max_body_bytes: 16777216 # 16 MiB cap on proxied request bodies; oversized requests get 413
   upstreams:
     openai: https://api.openai.com
     openrouter: https://openrouter.ai

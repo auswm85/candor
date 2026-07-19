@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/auswm85/token-tracker/db"
@@ -35,11 +36,21 @@ type UsageRow struct {
 
 func Open(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create db dir: %w", err)
 		}
 	}
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL")
+	// Pre-create the DB file with strict perms (also fixes an existing 0644 file).
+	// The DB holds usage data, not secrets, but it's still private.
+	if path != ":memory:" && !strings.HasPrefix(path, "file::memory:") {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+			_ = f.Close()
+			_ = os.Chmod(path, 0o600)
+		}
+	}
+	// NOTE: modernc.org/sqlite uses `_pragma=...` DSN params — the mattn-style
+	// `_journal_mode=WAL` / `_busy_timeout=N` forms are silently ignored.
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -208,7 +219,7 @@ func (s *Store) UsageSince(since time.Time) ([]UsageRow, error) {
 		r.FetchedAt, _ = time.Parse(time.RFC3339, fetched)
 		results = append(results, r)
 	}
-	return results, nil
+	return results, rows.Err()
 }
 
 func (s *Store) TotalCostSince(since time.Time) (float64, error) {

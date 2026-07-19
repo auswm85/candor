@@ -11,10 +11,11 @@ import (
 // OS releases it automatically when the file descriptor closes (including on
 // process exit), so a crash never leaves a stale lock.
 func flock(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
+	_ = os.Chmod(path, 0o600) // fix perms on a pre-existing file
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errIsWouldBlock(err) {

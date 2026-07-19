@@ -27,7 +27,37 @@ func newProxy(t *testing.T, provider, upstream string) (*Proxy, *store.Store) {
 		"anthropic": {"claude-sonnet-4-5": {InputPer1M: 3.00, CachedInputPer1M: 0.30, CacheWritePer1M: 3.75, OutputPer1M: 15.00}},
 	}
 	rec := NewRecorder(st, cost.New(prices))
-	return NewProxy(map[string]string{provider: upstream}, rec), st
+	return NewProxy(map[string]string{provider: upstream}, rec, 16<<20), st
+}
+
+func TestProxy_RequestBodyTooLarge(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream should not be reached for an oversized body")
+	}))
+	defer upstream.Close()
+
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProxy(map[string]string{"openai": upstream.URL}, NewRecorder(st, cost.New(nil)), 64) // 64-byte cap
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/openai/v1/chat/completions",
+		strings.NewReader(strings.Repeat("x", 200)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
 }
 
 func TestProxy_NonStreamingCapturesUsageAndForwards(t *testing.T) {

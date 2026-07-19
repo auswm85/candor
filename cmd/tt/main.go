@@ -403,13 +403,27 @@ Your normal inference key is forwarded untouched — no admin key needed.`,
 
 		upstreams := app.ProxyUpstreams(cfg)
 		listen := app.ProxyListen(cfg)
-		srv := &http.Server{Addr: listen, Handler: app.BuildProxy(cfg, st), ReadHeaderTimeout: 10 * time.Second}
+		if err := app.ValidateProxyListen(listen, cfg.Proxy.AllowNonLoopback); err != nil {
+			return fmt.Errorf("proxy: %w", err)
+		}
+		srv := &http.Server{
+			Addr:              listen,
+			Handler:           app.BuildProxy(cfg, st),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			MaxHeaderBytes:    1 << 20,
+			// No WriteTimeout: streamed responses can run for many minutes.
+		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		go func() {
 			<-ctx.Done()
-			_ = srv.Close()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				log.Printf("proxy shutdown: %v", err)
+			}
 		}()
 
 		fmt.Printf("token-tracker proxy listening on http://%s\n", listen)

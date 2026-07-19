@@ -16,15 +16,26 @@ import (
 // https://api.anthropic.com/v1/messages), and token usage is tapped from each
 // response — using a provider-appropriate extractor — and handed to the recorder.
 type Proxy struct {
-	upstreams map[string]string // provider name -> upstream base URL
-	recorder  *Recorder
-	client    *http.Client
+	upstreams    map[string]string // provider name -> upstream base URL
+	recorder     *Recorder
+	client       *http.Client
+	maxBodyBytes int64 // cap on the proxied request body (0 = unlimited)
 }
 
-func NewProxy(upstreams map[string]string, recorder *Recorder) *Proxy {
+// hopByHop headers are connection-specific and must not be forwarded by a proxy.
+var hopByHop = map[string]bool{
+	"connection": true, "keep-alive": true, "proxy-authenticate": true,
+	"proxy-authorization": true, "te": true, "trailer": true,
+	"transfer-encoding": true, "upgrade": true,
+}
+
+func isHopByHop(k string) bool { return hopByHop[strings.ToLower(k)] }
+
+func NewProxy(upstreams map[string]string, recorder *Recorder, maxBodyBytes int64) *Proxy {
 	return &Proxy{
-		upstreams: upstreams,
-		recorder:  recorder,
+		upstreams:    upstreams,
+		recorder:     recorder,
+		maxBodyBytes: maxBodyBytes,
 		// No Client.Timeout — it would cut off long streamed responses. A hung
 		// upstream is bounded instead by connect/TLS/response-header timeouts
 		// (which don't limit the streaming body) plus the request context, which
@@ -52,9 +63,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	ext := extractorFor(provider)
 
-	body, err := io.ReadAll(req.Body)
+	// Cap the request body. Read one byte past the limit so we can tell a body
+	// that's exactly at the limit from one that was truncated. (Only the request
+	// is capped — the response is streamed to the client untouched.)
+	reqReader := io.Reader(req.Body)
+	if p.maxBodyBytes > 0 {
+		reqReader = io.LimitReader(req.Body, p.maxBodyBytes+1)
+	}
+	body, err := io.ReadAll(reqReader)
 	if err != nil {
 		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if p.maxBodyBytes > 0 && int64(len(body)) > p.maxBodyBytes {
+		log.Printf("proxy: %s request body exceeds %d bytes", provider, p.maxBodyBytes)
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	body = ext.PrepareRequestBody(body)
@@ -69,7 +92,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	for k, vs := range req.Header {
-		if strings.EqualFold(k, "Content-Length") {
+		if strings.EqualFold(k, "Content-Length") || isHopByHop(k) {
 			continue
 		}
 		for _, v := range vs {
@@ -80,12 +103,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	resp, err := p.client.Do(outReq)
 	if err != nil {
-		http.Error(w, "upstream request failed: "+err.Error(), http.StatusBadGateway)
+		// Log the detail (incl. upstream) locally; keep the client's error generic.
+		log.Printf("proxy: %s upstream request failed: %v", provider, err)
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	for k, vs := range resp.Header {
+		if isHopByHop(k) {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}

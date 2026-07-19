@@ -8,5 +8,5 @@ import "os"
 // file but does not enforce mutual exclusion. Single-instance protection on
 // those platforms is a follow-up.
 func flock(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 }

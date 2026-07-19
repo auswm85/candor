@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"sync"
 	"time"
 
 	"github.com/auswm85/token-tracker/internal/cost"
@@ -27,10 +28,38 @@ type Recorder struct {
 	store  *store.Store
 	engine *cost.Engine
 	nowFn  func() time.Time
+	ids    sync.Map // "provider" and "provider\x00model" -> int64 row id
 }
 
 func NewRecorder(st *store.Store, engine *cost.Engine) *Recorder {
 	return &Recorder{store: st, engine: engine, nowFn: time.Now}
+}
+
+// providerID / modelID memoize the upsert+lookup so a busy proxy doesn't hit the
+// DB for IDs on every request (they never change once created).
+func (r *Recorder) providerID(name string) (int64, error) {
+	if v, ok := r.ids.Load(name); ok {
+		return v.(int64), nil
+	}
+	id, err := r.store.ProviderID(name)
+	if err != nil {
+		return 0, err
+	}
+	r.ids.Store(name, id)
+	return id, nil
+}
+
+func (r *Recorder) modelID(providerID int64, provider, model string) (int64, error) {
+	key := provider + "\x00" + model
+	if v, ok := r.ids.Load(key); ok {
+		return v.(int64), nil
+	}
+	id, err := r.store.ModelID(providerID, model)
+	if err != nil {
+		return 0, err
+	}
+	r.ids.Store(key, id)
+	return id, nil
 }
 
 // Record prices (if needed) and additively stores one request's usage into the
@@ -40,11 +69,11 @@ func (r *Recorder) Record(providerName string, u Usage) error {
 	if model == "" {
 		model = "unknown"
 	}
-	providerID, err := r.store.ProviderID(providerName)
+	providerID, err := r.providerID(providerName)
 	if err != nil {
 		return err
 	}
-	modelID, err := r.store.ModelID(providerID, model)
+	modelID, err := r.modelID(providerID, providerName, model)
 	if err != nil {
 		return err
 	}

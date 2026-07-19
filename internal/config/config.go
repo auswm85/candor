@@ -18,9 +18,11 @@ type Config struct {
 }
 
 type ProxyCfg struct {
-	Enabled   bool              `mapstructure:"enabled"`
-	Listen    string            `mapstructure:"listen"`
-	Upstreams map[string]string `mapstructure:"upstreams"`
+	Enabled          bool              `mapstructure:"enabled"`
+	Listen           string            `mapstructure:"listen"`
+	Upstreams        map[string]string `mapstructure:"upstreams"`
+	AllowNonLoopback bool              `mapstructure:"allow_nonloopback"` // bind to non-loopback addrs
+	MaxBodyBytes     int64             `mapstructure:"max_body_bytes"`    // cap proxied request body
 }
 
 type WebCfg struct {
@@ -69,6 +71,8 @@ func Load() (*Config, error) {
 	v.SetDefault("providers.openrouter.enabled", true)
 	v.SetDefault("proxy.enabled", true)
 	v.SetDefault("proxy.listen", "127.0.0.1:7879")
+	v.SetDefault("proxy.allow_nonloopback", false)
+	v.SetDefault("proxy.max_body_bytes", 16777216) // 16 MiB
 	v.SetDefault("proxy.upstreams", map[string]string{
 		"openai":     "https://api.openai.com",
 		"openrouter": "https://openrouter.ai",
