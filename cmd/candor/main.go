@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/alert"
-	"github.com/auswm85/token-tracker/internal/app"
-	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/lock"
-	"github.com/auswm85/token-tracker/internal/store"
-	"github.com/auswm85/token-tracker/internal/tui"
+	"github.com/auswm85/candor/internal/alert"
+	"github.com/auswm85/candor/internal/app"
+	"github.com/auswm85/candor/internal/config"
+	"github.com/auswm85/candor/internal/lock"
+	"github.com/auswm85/candor/internal/store"
+	"github.com/auswm85/candor/internal/tui"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func main() {
 	lk, err := lock.Acquire(filepath.Join(filepath.Dir(cfg.Database), "daemon.lock"))
 	if err != nil {
 		if errors.Is(err, lock.ErrLocked) {
-			log.Fatal("another token-tracker daemon is already running")
+			log.Fatal("another candor daemon is already running")
 		}
 		log.Fatalf("acquire lock: %v", err)
 	}

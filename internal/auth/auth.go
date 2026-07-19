@@ -10,10 +10,10 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const serviceName = "token-tracker"
-const envKeychain = "TOKEN_TRACKER_KEYCHAIN"
+const serviceName = "candor"
+const envKeychain = "CANDOR_KEYCHAIN"
 
-func keyName(provider string) string { return fmt.Sprintf("token-tracker/%s-api-key", provider) }
+func keyName(provider string) string { return fmt.Sprintf("candor/%s-api-key", provider) }
 
 var (
 	ErrNotFound = keyring.ErrNotFound
@@ -31,7 +31,7 @@ func fileBackend() string {
 }
 
 func loadFile() fileStore {
-	path := filepath.Join(os.TempDir(), "token-tracker-keys.json")
+	path := filepath.Join(os.TempDir(), "candor-keys.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fileStore{}
@@ -44,7 +44,7 @@ func loadFile() fileStore {
 }
 
 func saveFile(s fileStore) error {
-	path := filepath.Join(os.TempDir(), "token-tracker-keys.json")
+	path := filepath.Join(os.TempDir(), "candor-keys.json")
 	data, err := json.Marshal(s)
 	if err != nil {
 		return err

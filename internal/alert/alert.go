@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/config"
+	"github.com/auswm85/candor/internal/store"
 )
 
 type Checker struct {
@@ -72,12 +72,12 @@ func notify(msg string) error {
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("osascript", "-e",
-			fmt.Sprintf(`display notification %q with title "token-tracker"`, msg)).Run()
+			fmt.Sprintf(`display notification %q with title "candor"`, msg)).Run()
 	case "linux":
-		return exec.Command("notify-send", "token-tracker", msg).Run()
+		return exec.Command("notify-send", "candor", msg).Run()
 	case "windows":
 		script := fmt.Sprintf(
-			`New-BurntToastNotification -Text 'token-tracker', %q`, msg)
+			`New-BurntToastNotification -Text 'candor', %q`, msg)
 		return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
 	}
 	return nil

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/candor/internal/config"
 )
 
 func TestValidateProxyListen(t *testing.T) {

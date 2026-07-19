@@ -54,12 +54,12 @@ func Load() (*Config, error) {
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 
-	configDir := filepath.Join(os.Getenv("HOME"), ".config", "token-tracker")
+	configDir := filepath.Join(os.Getenv("HOME"), ".config", "candor")
 	v.AddConfigPath(configDir)
 	v.AddConfigPath(".")
 
 	v.SetDefault("poll_interval", "5m")
-	v.SetDefault("database", filepath.Join(os.Getenv("HOME"), ".local", "share", "token-tracker", "tokens.db"))
+	v.SetDefault("database", filepath.Join(os.Getenv("HOME"), ".local", "share", "candor", "tokens.db"))
 	v.SetDefault("tui.refresh", "1s")
 	v.SetDefault("defaults.monthly_budget_usd", 100)
 	v.SetDefault("defaults.alert_thresholds", []int{50, 75, 90, 100})

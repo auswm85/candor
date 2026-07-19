@@ -1,4 +1,4 @@
-// Package lock provides a single-instance file lock so only one token-tracker
+// Package lock provides a single-instance file lock so only one candor
 // daemon (poll loop + proxy) runs at a time. Acquiring is advisory and
 // auto-released when the process exits, avoiding stale locks after a crash.
 package lock

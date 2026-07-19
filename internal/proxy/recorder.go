@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/cost"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/cost"
+	"github.com/auswm85/candor/internal/store"
 )
 
 // Usage is the token accounting extracted from a single LLM response.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/provider"
+	"github.com/auswm85/candor/internal/provider"
 )
 
 const anthropicVersion = "2023-06-01"

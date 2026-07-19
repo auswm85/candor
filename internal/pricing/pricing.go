@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/cost"
+	"github.com/auswm85/candor/internal/cost"
 )
 
 // datedSnapshot matches a trailing model snapshot date. OpenRouter lists both a

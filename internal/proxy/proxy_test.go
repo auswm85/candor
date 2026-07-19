@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/cost"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/cost"
+	"github.com/auswm85/candor/internal/store"
 )
 
 func newProxy(t *testing.T, provider, upstream string) (*Proxy, *store.Store) {

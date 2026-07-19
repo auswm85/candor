@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/provider"
+	"github.com/auswm85/candor/internal/provider"
 )
 
 type Adapter struct {

@@ -3,8 +3,8 @@ package alert
 import (
 	"testing"
 
-	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/config"
+	"github.com/auswm85/candor/internal/store"
 )
 
 func newTestChecker(t *testing.T, budget float64, thresholds []int) *Checker {

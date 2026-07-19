@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
 
-## What token-tracker is
+## What candor is
 
 A local-first daemon that tracks LLM spend, applies cache-aware cost rules, projects monthly spend, and surfaces results via a bubbletea TUI. Local-only; no cloud dependency.
 
@@ -14,10 +14,10 @@ Two ingestion paths:
 ## Commands
 
 ```sh
-go build ./cmd/token-tracker   # build the daemon (TUI + poll loop + proxy)
+go build ./cmd/candor   # build the daemon (TUI + poll loop + proxy)
 go build ./cmd/tt              # build the short-form CLI
 
-go run ./cmd/token-tracker     # launch daemon: TUI + proxy (proxy.enabled defaults true)
+go run ./cmd/candor     # launch daemon: TUI + proxy (proxy.enabled defaults true)
 
 # tt subcommands
 go run ./cmd/tt run -- claude   # run a harness with its LLM traffic routed through the proxy (per-process, nothing persistent; falls back to direct if the proxy is down)
@@ -38,7 +38,7 @@ go mod tidy                    # clean dependencies
 
 ## Architecture
 
-Single Go binary, single process. The `token-tracker` daemon runs the TUI, and (guarded by config) the proxy and poll loop concurrently. A `daemon.lock` (flock) enforces one instance.
+Single Go binary, single process. The `candor` daemon runs the TUI, and (guarded by config) the proxy and poll loop concurrently. A `daemon.lock` (flock) enforces one instance.
 
 - **Proxy** — `internal/proxy`: transparent reverse proxy. First path segment selects the upstream (`/openai/…`, `/anthropic/…`, `/openrouter/…`); a per-provider extractor taps usage from the response (streaming + non-streaming). The recorder prices it and writes additively into a per-minute bucket via `store.AddUsage`.
 - **Poll loop** — `internal/poll`: ticks every N minutes, fetches incremental usage from each configured provider, costs it, and upserts (authoritative) via `store.InsertUsage`. Also records `last_poll` and runs the alert checker.

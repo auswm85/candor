@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/provider"
+	"github.com/auswm85/candor/internal/provider"
 )
 
 func TestClassify(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/auswm85/token-tracker
+module github.com/auswm85/candor
 
 go 1.26.5
 

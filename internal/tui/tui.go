@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/alert"
-	"github.com/auswm85/token-tracker/internal/app"
-	"github.com/auswm85/token-tracker/internal/auth"
-	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/cost"
-	"github.com/auswm85/token-tracker/internal/proxy"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/alert"
+	"github.com/auswm85/candor/internal/app"
+	"github.com/auswm85/candor/internal/auth"
+	"github.com/auswm85/candor/internal/config"
+	"github.com/auswm85/candor/internal/cost"
+	"github.com/auswm85/candor/internal/proxy"
+	"github.com/auswm85/candor/internal/store"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -530,10 +530,10 @@ func (m model) viewOnboarding() string {
 func (m model) viewWelcome() string {
 	var b strings.Builder
 	b.WriteString("╔══════════════════════════════════════════╗\n")
-	b.WriteString("║         token-tracker                   ║\n")
-	b.WriteString("║    Local-first LLM cost monitoring      ║\n")
+	b.WriteString("║                  candor                  ║\n")
+	b.WriteString("║     Local-first LLM cost monitoring      ║\n")
 	b.WriteString("╚══════════════════════════════════════════╝\n\n")
-	b.WriteString("token-tracker polls your LLM provider usage APIs\n")
+	b.WriteString("candor polls your LLM provider usage APIs\n")
 	b.WriteString("and shows your spend in a live dashboard.\n\n")
 	b.WriteString("No keys configured yet.\n")
 	b.WriteString("Press Enter to set up your providers.\n")
@@ -628,7 +628,7 @@ func (m model) viewDashboard() string {
 	main := panelStyle.Width(mainInner).Height(innerH).Render(content)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 
-	header := brandStyle.Render("● token-tracker")
+	header := brandStyle.Render("● candor")
 	if hint := m.headerHint(); hint != "" {
 		header += "  " + dimStyle.Render(hint)
 	}

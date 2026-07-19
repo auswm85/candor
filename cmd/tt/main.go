@@ -16,12 +16,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/app"
-	"github.com/auswm85/token-tracker/internal/auth"
-	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/lock"
-	"github.com/auswm85/token-tracker/internal/store"
-	"github.com/auswm85/token-tracker/internal/tui"
+	"github.com/auswm85/candor/internal/app"
+	"github.com/auswm85/candor/internal/auth"
+	"github.com/auswm85/candor/internal/config"
+	"github.com/auswm85/candor/internal/lock"
+	"github.com/auswm85/candor/internal/store"
+	"github.com/auswm85/candor/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -41,7 +41,7 @@ func readSecret(reader *bufio.Reader) (string, error) {
 
 var rootCmd = &cobra.Command{
 	Use:   "tt",
-	Short: "token-tracker — local-first LLM cost monitor",
+	Short: "candor — local-first LLM cost monitor",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	},
@@ -243,7 +243,7 @@ var daemonCmd = &cobra.Command{
 		lk, err := lock.Acquire(filepath.Join(filepath.Dir(cfg.Database), "daemon.lock"))
 		if err != nil {
 			if errors.Is(err, lock.ErrLocked) {
-				return fmt.Errorf("another token-tracker daemon is already running")
+				return fmt.Errorf("another candor daemon is already running")
 			}
 			return fmt.Errorf("acquire lock: %w", err)
 		}
@@ -257,7 +257,7 @@ var daemonCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		log.Printf("token-tracker daemon started (interval %s, db %s)",
+		log.Printf("candor daemon started (interval %s, db %s)",
 			app.ParseInterval(cfg.PollInterval, 5*time.Minute), cfg.Database)
 		scheduler.Start(ctx) // blocks until signalled
 		log.Print("daemon stopped")
@@ -314,8 +314,8 @@ var serviceCmd = &cobra.Command{
 	Long: `Print a service definition that runs 'tt daemon' at login/boot.
 
 Redirect it into the right location, for example:
-  macOS:  tt service > ~/Library/LaunchAgents/dev.token-tracker.plist
-  Linux:  tt service > ~/.config/systemd/user/token-tracker.service`,
+  macOS:  tt service > ~/Library/LaunchAgents/dev.candor.plist
+  Linux:  tt service > ~/.config/systemd/user/candor.service`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := os.Executable()
 		if err != nil {
@@ -338,7 +338,7 @@ const launchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.token-tracker</string>
+    <string>dev.candor</string>
     <key>ProgramArguments</key>
     <array>
         <string>%s</string>
@@ -353,7 +353,7 @@ const launchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
 `
 
 const systemdUnit = `[Unit]
-Description=token-tracker LLM cost monitor
+Description=candor LLM cost monitor
 After=network-online.target
 
 [Service]
@@ -428,7 +428,7 @@ Your normal inference key is forwarded untouched — no admin key needed.`,
 			}
 		}()
 
-		fmt.Printf("token-tracker proxy listening on http://%s\n", listen)
+		fmt.Printf("candor proxy listening on http://%s\n", listen)
 		for name := range upstreams {
 			fmt.Printf("  %-10s → set base URL to http://%s/%s/...\n", name, listen, name)
 		}
@@ -470,7 +470,7 @@ usage just isn't recorded, so it never breaks your workflow.
 			env = append(env, app.ProxyChildEnv(cfg, listen, providers)...)
 			fmt.Fprintf(os.Stderr, "▸ routing %s through the proxy at http://%s (usage tracked)\n", name, listen)
 		} else {
-			fmt.Fprintf(os.Stderr, "⚠ proxy not reachable at http://%s — running %s directly; usage will NOT be tracked.\n  start it with `token-tracker` or `tt proxy`.\n", listen, name)
+			fmt.Fprintf(os.Stderr, "⚠ proxy not reachable at http://%s — running %s directly; usage will NOT be tracked.\n  start it with `candor` or `tt proxy`.\n", listen, name)
 		}
 
 		// Catch terminal signals so this wrapper doesn't die before the child;
@@ -504,7 +504,7 @@ var tuiCmd = &cobra.Command{
 	Short: "Open the dashboard as a read-only viewer attached to a running proxy",
 	Long: `Open the live dashboard without starting a proxy. It reads persisted spend
 from the database and pulls the live activity feed + session burn rate from a
-running proxy's /stats endpoint (start one with ` + "`token-tracker`" + ` or the
+running proxy's /stats endpoint (start one with ` + "`candor`" + ` or the
 background service). Safe to run in a separate shell alongside the proxy.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()

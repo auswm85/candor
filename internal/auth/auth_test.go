@@ -6,11 +6,11 @@ import (
 )
 
 func TestFileBackend(t *testing.T) {
-	os.Setenv("TOKEN_TRACKER_KEYCHAIN", "file")
-	defer os.Unsetenv("TOKEN_TRACKER_KEYCHAIN")
+	os.Setenv("CANDOR_KEYCHAIN", "file")
+	defer os.Unsetenv("CANDOR_KEYCHAIN")
 
 	// Clear any leftover state
-	os.Remove(os.TempDir() + "/token-tracker-keys.json")
+	os.Remove(os.TempDir() + "/candor-keys.json")
 
 	// Should start empty
 	if configured := ListConfiguredProviders(); len(configured) != 0 {
@@ -58,9 +58,9 @@ func TestFileBackend(t *testing.T) {
 }
 
 func TestMultipleProviders(t *testing.T) {
-	os.Setenv("TOKEN_TRACKER_KEYCHAIN", "file")
-	defer os.Unsetenv("TOKEN_TRACKER_KEYCHAIN")
-	defer os.Remove(os.TempDir() + "/token-tracker-keys.json")
+	os.Setenv("CANDOR_KEYCHAIN", "file")
+	defer os.Unsetenv("CANDOR_KEYCHAIN")
+	defer os.Remove(os.TempDir() + "/candor-keys.json")
 
 	for _, p := range []string{"openai", "anthropic", "openrouter"} {
 		if err := SetProviderKey(p, "key-"+p); err != nil {

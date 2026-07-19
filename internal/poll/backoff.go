@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/provider"
+	"github.com/auswm85/candor/internal/provider"
 )
 
 // providerState tracks per-provider poll health for backoff and skip decisions.

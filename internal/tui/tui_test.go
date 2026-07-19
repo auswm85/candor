@@ -5,16 +5,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/auswm85/token-tracker/internal/auth"
-	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/cost"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/auth"
+	"github.com/auswm85/candor/internal/config"
+	"github.com/auswm85/candor/internal/cost"
+	"github.com/auswm85/candor/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestOnboardingWelcomeScreen(t *testing.T) {
-	os.Setenv("TOKEN_TRACKER_KEYCHAIN", "file")
-	defer os.Unsetenv("TOKEN_TRACKER_KEYCHAIN")
+	os.Setenv("CANDOR_KEYCHAIN", "file")
+	defer os.Unsetenv("CANDOR_KEYCHAIN")
 
 	cfg, _ := config.Load()
 	m := NewModel(cfg)
@@ -91,8 +91,8 @@ func TestDashboardTabs(t *testing.T) {
 }
 
 func TestOnboardingFlow(t *testing.T) {
-	os.Setenv("TOKEN_TRACKER_KEYCHAIN", "file")
-	defer os.Unsetenv("TOKEN_TRACKER_KEYCHAIN")
+	os.Setenv("CANDOR_KEYCHAIN", "file")
+	defer os.Unsetenv("CANDOR_KEYCHAIN")
 
 	cfg, _ := config.Load()
 	m := NewModel(cfg)
@@ -157,14 +157,14 @@ func TestOnboardingFlow(t *testing.T) {
 		t.Fatalf("expected stateDashboard, got %v", m.state)
 	}
 	view = m.View()
-	if !strings.Contains(view, "token-tracker") {
+	if !strings.Contains(view, "candor") {
 		t.Errorf("expected dashboard, got: %s", view)
 	}
 }
 
 func TestDashboardWhenConfigured(t *testing.T) {
-	os.Setenv("TOKEN_TRACKER_KEYCHAIN", "file")
-	defer os.Unsetenv("TOKEN_TRACKER_KEYCHAIN")
+	os.Setenv("CANDOR_KEYCHAIN", "file")
+	defer os.Unsetenv("CANDOR_KEYCHAIN")
 
 	// Pre-configure a key so onboarding is skipped
 	auth.SetProviderKey("openai", "sk-test")
@@ -177,7 +177,7 @@ func TestDashboardWhenConfigured(t *testing.T) {
 	}
 	// Dashboard chrome (not onboarding) should render.
 	view := m.View()
-	if !strings.Contains(view, "token-tracker") || !strings.Contains(view, "At a glance") {
+	if !strings.Contains(view, "candor") || !strings.Contains(view, "At a glance") {
 		t.Errorf("expected dashboard, got: %s", view)
 	}
 }

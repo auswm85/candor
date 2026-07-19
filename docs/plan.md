@@ -1,4 +1,4 @@
-# token-tracker — Implementation Plan
+# candor — Implementation Plan
 
 > **⚠️ Superseded in parts.** This is the original polling-first plan. During
 > implementation the project pivoted: **proxy mode is now the primary ingestion
@@ -18,9 +18,9 @@
 
 **Differentiation vs existing tools:**
 
-- _Helicone/Langfuse/Portkey_ — cloud-hosted, require routing traffic through their gateway. token-tracker reads usage directly from provider billing APIs, never intercepts your traffic.
+- _Helicone/Langfuse/Portkey_ — cloud-hosted, require routing traffic through their gateway. candor reads usage directly from provider billing APIs, never intercepts your traffic.
 - _OpenAI's own dashboard_ — slow, web-only, no cost projection, no cache-read vs cache-write breakdown by project.
-- _Vercel AI Gateway_ — couples to their gateway. token-tracker is provider-agnostic.
+- _Vercel AI Gateway_ — couples to their gateway. candor is provider-agnostic.
 - **Cache-aware cost model** is the killer feature: the July 2026 OpenAI cache-write pricing change punishes task-oriented workloads, and no existing tool surfaces cache-read vs cache-write costs separately.
 
 ## 2. v1 Scope
@@ -40,8 +40,8 @@
 ## 3. Project Structure
 
 ```
-token-tracker/
-├── go.mod                         # module: github.com/auswm85/token-tracker
+candor/
+├── go.mod                         # module: github.com/auswm85/candor
 ├── CLAUDE.md                      # conventions, commands, architecture
 ├── README.md
 ├── Makefile                       # build/test/run/lint targets
@@ -49,7 +49,7 @@ token-tracker/
 │   ├── ci.yml                     # go test + lint + build on push
 │   └── release.yml                # goreleaser on tag
 ├── cmd/
-│   ├── token-tracker/             # main daemon entrypoint
+│   ├── candor/             # main daemon entrypoint
 │   │   └── main.go
 │   └── tt/                        # short-form CLI for one-shot queries
 │       └── main.go
@@ -94,7 +94,7 @@ Single Go binary, single process. Three concurrent goroutines:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  token-tracker daemon                                        │
+│  candor daemon                                        │
 │                                                             │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐ │
 │  │  poll loop   │──>│ cost engine  │──>│  SQLite store    │ │
@@ -233,11 +233,11 @@ CREATE TABLE config_state (
 
 ## 6. Configuration
 
-**File:** `~/.config/token-tracker/config.yaml` (macOS/Linux) or `%APPDATA%\token-tracker\config.yaml` (Windows).
+**File:** `~/.config/candor/config.yaml` (macOS/Linux) or `%APPDATA%\candor\config.yaml` (Windows).
 
 ```yaml
 poll_interval: 5m
-database: ~/.local/share/token-tracker/tokens.db
+database: ~/.local/share/candor/tokens.db
 web:
   enabled: true
   listen: 127.0.0.1:7878
@@ -250,13 +250,13 @@ defaults:
 providers:
   openai:
     enabled: true
-    keyring_key: token-tracker/openai-api-key
+    keyring_key: candor/openai-api-key
   anthropic:
     enabled: true
-    keyring_key: token-tracker/anthropic-api-key
+    keyring_key: candor/anthropic-api-key
   openrouter:
     enabled: true
-    keyring_key: token-tracker/openrouter-api-key
+    keyring_key: candor/openrouter-api-key
 
 prices:
   # ... see §4.2
@@ -268,10 +268,10 @@ prices:
 
 Three primary views:
 
-1. **Live dashboard** (`tt` or `token-tracker` daemon)
+1. **Live dashboard** (`tt` or `candor` daemon)
 
 ```
-┌─ token-tracker ────────────────────────────────────────────┐
+┌─ candor ────────────────────────────────────────────┐
 │ Today: $4.32 / $10 daily budget    ▓▓▓▓▓▓░░░░ 43%          │
 │ Month: $87.50 / $100 budget        ▓▓▓▓▓▓▓▓▓░ 87% ⚠       │
 │                                                             │
@@ -327,7 +327,7 @@ tt status                   # daemon health, last poll time, DB size
 - Thresholds are % of `monthly_budget_usd` (e.g., 50/75/90/100%).
 - Triggered when projected monthly spend crosses threshold (projection = current_spend + extrapolated_remaining_time_at_avg_rate).
 - Channels in v1: **terminal notification only.**
-  - macOS: `osascript -e 'display notification "..." with title "token-tracker"'`
+  - macOS: `osascript -e 'display notification "..." with title "candor"'`
   - Linux: `notify-send`
   - Windows: `msg` or `BurntToast` PowerShell
 - v1.1 escalation: Slack webhook, email (Resend).
@@ -426,7 +426,7 @@ the existing cost engine, store, TUI, and alerts.
 
 | Risk                                                                    | Severity | Mitigation                                                                                                                        |
 | ----------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Anthropic Admin API key requirement (not standard API key)              | Low      | Documented in config as `keyring_key: token-tracker/anthropic-admin-key`. Users generate via Console → Settings → Admin API keys. |
+| Anthropic Admin API key requirement (not standard API key)              | Low      | Documented in config as `keyring_key: candor/anthropic-admin-key`. Users generate via Console → Settings → Admin API keys. |
 | OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
 | OpenAI deprecates `/v1/organization/costs` as they did `/v1/usage`      | Medium   | Pin API version; monitor changelog. `tt prices diff` keeps you aware of changes.                                                  |
 | Cache-read vs cache-write breakdown not available in aggregate endpoint | Medium   | OpenAI's `/v1/organization/costs` returns `usage_type: cached_tokens` — verify in M0.                                             |

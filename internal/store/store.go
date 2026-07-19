@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/auswm85/token-tracker/db"
+	"github.com/auswm85/candor/db"
 	_ "modernc.org/sqlite"
 )
 

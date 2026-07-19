@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/auswm85/token-tracker/internal/cost"
+	"github.com/auswm85/candor/internal/cost"
 )
 
 func TestFetch_MapsAndNormalizes(t *testing.T) {

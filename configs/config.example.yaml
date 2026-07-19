@@ -1,5 +1,5 @@
 poll_interval: 5m
-database: ~/.local/share/token-tracker/tokens.db
+database: ~/.local/share/candor/tokens.db
 
 tui:
   refresh: 1s
@@ -25,13 +25,13 @@ defaults:
 providers:
   openai:
     enabled: true
-    keyring_key: token-tracker/openai-api-key
+    keyring_key: candor/openai-api-key
   anthropic:
     enabled: true
-    keyring_key: token-tracker/anthropic-admin-key # Requires an Admin API key (sk-ant-admin01-...)
+    keyring_key: candor/anthropic-admin-key # Requires an Admin API key (sk-ant-admin01-...)
   openrouter:
     enabled: true
-    keyring_key: token-tracker/openrouter-api-key
+    keyring_key: candor/openrouter-api-key
 
 # Pricing is fetched dynamically from OpenRouter's public model catalog (no auth)
 # on daemon start, cached to <db-dir>/prices.json, and refreshed daily. If the

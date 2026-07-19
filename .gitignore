@@ -1,5 +1,5 @@
 # Build artifacts (anchored to root to avoid matching cmd/ directories)
-/token-tracker
+/candor
 /tt
 *.exe
 *.test

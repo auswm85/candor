@@ -1,4 +1,4 @@
-# token-tracker
+# candor
 
 Local-first LLM cost tracker. A transparent local **proxy** captures live, per-request spend from coding harnesses (Claude Code, OpenCode, …), and an optional **poll loop** pulls provider usage APIs for periodic totals. Applies cache-aware cost rules, projects monthly spend, and surfaces it in a terminal UI (bubbletea).
 
@@ -18,14 +18,14 @@ Local-first LLM cost tracker. A transparent local **proxy** captures live, per-r
 
 ```sh
 # Install both binaries: the TUI daemon and the short-form CLI
-go install github.com/auswm85/token-tracker/cmd/token-tracker@latest
-go install github.com/auswm85/token-tracker/cmd/tt@latest
+go install github.com/auswm85/candor/cmd/candor@latest
+go install github.com/auswm85/candor/cmd/tt@latest
 
 # Set up API keys (stored in your OS keychain)
 tt auth                    # prompts for OpenAI, Anthropic, OpenRouter keys
 
 # Launch the live TUI dashboard (foreground: polls + UI)
-token-tracker
+candor
 
 # ...or run the poller headless in the background
 tt daemon
@@ -53,7 +53,7 @@ Two ways to run it:
 
 ```sh
 # All-in-one: proxy + live dashboard in one terminal
-token-tracker
+candor
 
 # ...or run the proxy as an always-on background service and open the dashboard
 # on demand from any shell (it attaches to the running proxy over /stats):
@@ -61,7 +61,7 @@ tt proxy          # or install the launchd/systemd unit: tt service
 tt tui            # read-only viewer — live feed + burn rate included
 ```
 
-`token-tracker` auto-detects an already-running proxy and attaches as a viewer
+`candor` auto-detects an already-running proxy and attaches as a viewer
 instead of binding a second one, so either workflow just works.
 
 **Recommended: `tt run` (nothing persistent).** Wrap your harness and its LLM
@@ -97,7 +97,7 @@ Notes:
 
 ## Configuration
 
-Config lives at `~/.config/token-tracker/config.yaml`. See `configs/config.example.yaml` for the full schema.
+Config lives at `~/.config/candor/config.yaml`. See `configs/config.example.yaml` for the full schema.
 
 Key settings:
 
@@ -122,7 +122,7 @@ Polling API keys are stored in your OS keychain via `go-keyring` — never in th
         │ base_url                                       ▲ every N min
         ▼                                                │
 ┌─────────────────────────────────────────────────────────────┐
-│  token-tracker daemon                                        │
+│  candor daemon                                        │
 │                                                              │
 │  ┌──────────────┐        ┌──────────────┐   ┌─────────────┐  │
 │  │    proxy     │──┐  ┌──│  poll loop   │──>│ cost engine │  │
@@ -157,7 +157,7 @@ See `docs/plan.md` for the full implementation plan.
 ## Development
 
 ```sh
-go build ./cmd/token-tracker   # build the daemon (TUI + proxy + poll)
+go build ./cmd/candor   # build the daemon (TUI + proxy + poll)
 go build ./cmd/tt              # build the CLI
 go test -race -count=1 ./...   # run all tests
 go vet ./...                   # static analysis

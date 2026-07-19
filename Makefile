@@ -1,6 +1,6 @@
 .PHONY: all build build-daemon build-cli test vet lint tidy clean migrate web-build web-dev dev
 
-BINARY_DAEMON = token-tracker
+BINARY_DAEMON = candor
 BINARY_CLI    = tt
 
 all: build
@@ -8,7 +8,7 @@ all: build
 build: build-daemon build-cli
 
 build-daemon:
-	go build -o dist/$(BINARY_DAEMON) ./cmd/token-tracker
+	go build -o dist/$(BINARY_DAEMON) ./cmd/candor
 
 build-cli:
 	go build -o dist/$(BINARY_CLI) ./cmd/tt

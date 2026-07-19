@@ -5,10 +5,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/auswm85/token-tracker/internal/alert"
-	"github.com/auswm85/token-tracker/internal/cost"
-	"github.com/auswm85/token-tracker/internal/provider"
-	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/candor/internal/alert"
+	"github.com/auswm85/candor/internal/cost"
+	"github.com/auswm85/candor/internal/provider"
+	"github.com/auswm85/candor/internal/store"
 )
 
 // lookback is how far back each poll re-fetches. Records are upserted by
