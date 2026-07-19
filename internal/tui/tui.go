@@ -15,6 +15,15 @@ import (
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	titleStyle    = lipgloss.NewStyle().Bold(true)
+	activeTab     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("62")).Padding(0, 1)
+	inactiveTab   = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	sectionHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 )
 
 var providers = []string{"openai", "anthropic", "openrouter"}
@@ -413,7 +422,16 @@ func (m model) viewDone() string {
 
 func (m model) viewDashboard() string {
 	var b strings.Builder
+
+	// Title + tab strip + inline nav hint, with a rule underneath so the strip
+	// reads as navigation rather than a heading.
+	b.WriteString(titleStyle.Render("token-tracker"))
+	b.WriteString("   ")
 	b.WriteString(m.tabBar())
+	b.WriteString("  ")
+	b.WriteString(dimStyle.Render("←/→ or Tab · 1·2·3"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render(strings.Repeat("─", 52)))
 	b.WriteString("\n\n")
 
 	switch m.tab {
@@ -428,28 +446,33 @@ func (m model) viewDashboard() string {
 	if m.spendErr != "" {
 		fmt.Fprintf(&b, "\n⚠ %s\n", m.spendErr)
 	}
-	b.WriteString("\n[1] Live  [2] History  [3] Alerts   r refresh  q quit\n")
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("←/→ switch tab   ·   r refresh   ·   q quit"))
+	b.WriteString("\n")
 	return b.String()
 }
 
+// tabBar renders Live/History/Alerts as tabs — the active one highlighted, each
+// prefixed with its number key so the shortcut is obvious.
 func (m model) tabBar() string {
 	names := []string{"Live", "History", "Alerts"}
-	parts := make([]string, len(names))
+	tabs := make([]string, len(names))
 	for i, n := range names {
+		label := fmt.Sprintf("%d %s", i+1, n)
 		if tab(i) == m.tab {
-			parts[i] = "[" + n + "]"
+			tabs[i] = activeTab.Render(label)
 		} else {
-			parts[i] = " " + n + " "
+			tabs[i] = inactiveTab.Render(label)
 		}
 	}
-	return "token-tracker — " + strings.Join(parts, " ")
+	return strings.Join(tabs, " ")
 }
 
 func (m model) renderLive() string {
 	var b strings.Builder
 
 	// --- Spend ---
-	b.WriteString("Spend\n")
+	b.WriteString(sectionHeader.Render("Spend") + "\n")
 	fmt.Fprintf(&b, "  Today      $%.2f\n", m.today)
 	budget := m.cfg.Defaults.MonthlyBudgetUSD
 	if budget > 0 {
@@ -466,7 +489,7 @@ func (m model) renderLive() string {
 
 	// --- Proxy ---
 	listen := app.ProxyListen(m.cfg)
-	b.WriteString("\nProxy\n")
+	b.WriteString("\n" + sectionHeader.Render("Proxy") + "\n")
 	if m.cfg.Proxy.Enabled {
 		fmt.Fprintf(&b, "  ✓ listening on %s\n", listen)
 	} else {
@@ -499,7 +522,7 @@ func (m model) renderHistory() string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Daily cost — last 30 days\n\n")
+	b.WriteString(sectionHeader.Render("Daily cost — last 30 days") + "\n\n")
 	const width = 30
 	for _, d := range m.daily {
 		bars := 0
