@@ -65,6 +65,9 @@ func main() {
 		go scheduler.Start(ctx)
 	}
 
+	// One recorder shared by the proxy (writes) and the TUI (reads the live feed).
+	rec := app.BuildRecorder(cfg, st)
+
 	// Start the live-usage proxy alongside the TUI when enabled.
 	if cfg.Proxy.Enabled {
 		if err := app.ValidateProxyListen(app.ProxyListen(cfg), cfg.Proxy.AllowNonLoopback); err != nil {
@@ -72,7 +75,7 @@ func main() {
 		}
 		proxySrv := &http.Server{
 			Addr:              app.ProxyListen(cfg),
-			Handler:           app.BuildProxy(cfg, st),
+			Handler:           app.BuildProxy(cfg, rec),
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       120 * time.Second,
 			MaxHeaderBytes:    1 << 20, // 1 MiB
@@ -96,7 +99,7 @@ func main() {
 
 	alerter := alert.New(cfg, st)
 
-	m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg))
+	m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg)).WithRecorder(rec)
 	p := tui.NewProgram(m, alerter)
 
 	go func() {

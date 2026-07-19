@@ -408,7 +408,7 @@ Your normal inference key is forwarded untouched — no admin key needed.`,
 		}
 		srv := &http.Server{
 			Addr:              listen,
-			Handler:           app.BuildProxy(cfg, st),
+			Handler:           app.BuildProxy(cfg, app.BuildRecorder(cfg, st)),
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       120 * time.Second,
 			MaxHeaderBytes:    1 << 20,

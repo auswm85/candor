@@ -23,17 +23,69 @@ type Usage struct {
 	CostUSD float64
 }
 
-// Recorder turns extracted usage into a stored, costed usage row.
+// Event is a single recorded request, kept in an in-memory ring for the live TUI.
+type Event struct {
+	At         time.Time
+	Provider   string
+	Model      string
+	Input      int64
+	Cached     int64
+	CacheWrite int64
+	Output     int64
+	CostUSD    float64
+}
+
+const ringSize = 256
+
+// Recorder turns extracted usage into a stored, costed usage row, and keeps a
+// ring of recent events + a session counter for the live dashboard.
 type Recorder struct {
 	store  *store.Store
 	engine *cost.Engine
 	nowFn  func() time.Time
 	ids    sync.Map // "provider" and "provider\x00model" -> int64 row id
+
+	mu          sync.Mutex
+	ring        []Event // oldest-first, capped at ringSize
+	requests    int
+	sessionCost float64 // cumulative USD recorded this session
+	started     time.Time
 }
 
 func NewRecorder(st *store.Store, engine *cost.Engine) *Recorder {
-	return &Recorder{store: st, engine: engine, nowFn: time.Now}
+	return &Recorder{store: st, engine: engine, nowFn: time.Now, started: time.Now()}
 }
+
+// Recent returns up to n most-recent events, newest first.
+func (r *Recorder) Recent(n int) []Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n > len(r.ring) {
+		n = len(r.ring)
+	}
+	out := make([]Event, n)
+	for i := 0; i < n; i++ {
+		out[i] = r.ring[len(r.ring)-1-i]
+	}
+	return out
+}
+
+// Requests is the number of requests recorded since the process started.
+func (r *Recorder) Requests() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.requests
+}
+
+// SessionCost is the cumulative USD recorded since the process started.
+func (r *Recorder) SessionCost() float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessionCost
+}
+
+// Started reports when this recorder (this daemon session) began.
+func (r *Recorder) Started() time.Time { return r.started }
 
 // providerID / modelID memoize the upsert+lookup so a busy proxy doesn't hit the
 // DB for IDs on every request (they never change once created).
@@ -84,7 +136,21 @@ func (r *Recorder) Record(providerName string, u Usage) error {
 			u.InputTokens, u.CachedInputTokens, u.CacheWriteTokens, u.OutputTokens)
 	}
 
-	bucket := r.nowFn().UTC().Truncate(time.Minute)
+	now := r.nowFn()
+	r.mu.Lock()
+	r.ring = append(r.ring, Event{
+		At: now, Provider: providerName, Model: model,
+		Input: u.InputTokens, Cached: u.CachedInputTokens,
+		CacheWrite: u.CacheWriteTokens, Output: u.OutputTokens, CostUSD: costUSD,
+	})
+	if len(r.ring) > ringSize {
+		r.ring = r.ring[len(r.ring)-ringSize:]
+	}
+	r.requests++
+	r.sessionCost += costUSD
+	r.mu.Unlock()
+
+	bucket := now.UTC().Truncate(time.Minute)
 	return r.store.AddUsage(store.UsageRow{
 		ProviderID:        providerID,
 		ModelID:           modelID,

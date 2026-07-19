@@ -265,6 +265,39 @@ func (s *Store) DailyCostSince(since time.Time) ([]DayCost, error) {
 	return out, rows.Err()
 }
 
+// HourCost is total cost within a single clock hour, keyed by the hour prefix
+// "2006-01-02T15" (UTC).
+type HourCost struct {
+	Hour    string
+	CostUSD float64
+}
+
+// HourlyCostSince returns total cost grouped by clock hour since the given time,
+// oldest hour first. Used by the TUI's 24-hour trend sparkline.
+func (s *Store) HourlyCostSince(since time.Time) ([]HourCost, error) {
+	rows, err := s.db.Query(`
+		SELECT substr(bucket_start, 1, 13) AS hour, SUM(cost_usd) AS cost
+		FROM usage_records
+		WHERE bucket_start >= ?
+		GROUP BY hour
+		ORDER BY hour ASC
+	`, since.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []HourCost
+	for rows.Next() {
+		var h HourCost
+		if err := rows.Scan(&h.Hour, &h.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // GetConfigState returns the stored value for a key, or "" if unset.
 func (s *Store) GetConfigState(key string) (string, error) {
 	var v string

@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"log"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,19 +12,52 @@ import (
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
 	"github.com/auswm85/token-tracker/internal/cost"
+	"github.com/auswm85/token-tracker/internal/proxy"
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	activeTab     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("62")).Padding(0, 1)
-	inactiveTab   = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	sectionHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
+// Palette — a small, consistent set of colors used across the dashboard.
+const (
+	clrAccent = lipgloss.Color("111") // headings, active nav
+	clrGreen  = lipgloss.Color("42")
+	clrYellow = lipgloss.Color("214")
+	clrRed    = lipgloss.Color("203")
+	clrText   = lipgloss.Color("252")
+	clrDim    = lipgloss.Color("245")
+	clrFaint  = lipgloss.Color("240") // borders, rules
 )
+
+var (
+	brandStyle    = lipgloss.NewStyle().Bold(true).Foreground(clrAccent)
+	dimStyle      = lipgloss.NewStyle().Foreground(clrDim)
+	faintStyle    = lipgloss.NewStyle().Foreground(clrFaint)
+	sectionHeader = lipgloss.NewStyle().Bold(true).Foreground(clrAccent)
+
+	activeNav   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("62"))
+	inactiveNav = lipgloss.NewStyle().Foreground(clrDim)
+
+	panelStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(clrFaint).Padding(0, 1)
+
+	// sparkline levels, low → high
+	sparkLevels = []rune("▁▂▃▄▅▆▇█")
+)
+
+// providerTag colors a provider name for the activity feed.
+func providerTag(name string) string {
+	color := clrDim
+	switch name {
+	case "openai":
+		color = clrGreen
+	case "anthropic":
+		color = clrYellow
+	case "openrouter":
+		color = lipgloss.Color("141") // purple
+	}
+	return lipgloss.NewStyle().Foreground(color).Render(name)
+}
 
 var providers = []string{"openai", "anthropic", "openrouter"}
 
@@ -54,12 +86,17 @@ const (
 )
 
 type model struct {
-	cfg     *config.Config
-	alerter *alert.Checker
-	store   *store.Store
-	engine  *cost.Engine
-	state   state
-	step    step
+	cfg      *config.Config
+	alerter  *alert.Checker
+	store    *store.Store
+	engine   *cost.Engine
+	recorder *proxy.Recorder
+	state    state
+	step     step
+
+	// terminal size (from tea.WindowSizeMsg)
+	width  int
+	height int
 
 	// dashboard state
 	tab        tab
@@ -67,11 +104,19 @@ type model struct {
 	month      float64
 	projected  float64
 	daily      []store.DayCost
+	hourly     []store.HourCost
 	topModels  []store.ModelUsage
 	cacheSaved float64
 	cacheExtra float64
 	notified   int // highest budget threshold already alerted this month
 	spendErr   string
+
+	// live session state (from the in-process proxy recorder)
+	feed      []proxy.Event
+	sessReq   int
+	sessCost  float64
+	sessStart time.Time
+	updatedAt time.Time
 
 	// onboarding state
 	pickIndex  int
@@ -106,9 +151,18 @@ func (m model) WithEngine(e *cost.Engine) model {
 	return m
 }
 
+// WithRecorder attaches the in-process proxy recorder so the dashboard can show
+// the live activity feed and session burn rate without a DB round-trip.
+func (m model) WithRecorder(r *proxy.Recorder) model {
+	m.recorder = r
+	return m
+}
+
 func NewProgram(m model, alerter *alert.Checker) *tea.Program {
 	m.alerter = alerter
-	return tea.NewProgram(m)
+	// Alt-screen: take over the terminal (clears prior scrollback on boot,
+	// restores it on exit) like Claude Code / OpenCode.
+	return tea.NewProgram(m, tea.WithAltScreen())
 }
 
 type spendMsg struct {
@@ -116,11 +170,18 @@ type spendMsg struct {
 	month      float64
 	projected  float64
 	daily      []store.DayCost
+	hourly     []store.HourCost
 	topModels  []store.ModelUsage
 	cacheSaved float64
 	cacheExtra float64
 	notified   int
 	err        error
+
+	// live session snapshot (nil recorder → zero values)
+	feed      []proxy.Event
+	sessReq   int
+	sessCost  float64
+	sessStart time.Time
 }
 
 type tickMsg struct{}
@@ -144,6 +205,10 @@ func (m model) loadSpend() tea.Msg {
 		return spendMsg{err: err}
 	}
 	daily, err := m.store.DailyCostSince(now.AddDate(0, 0, -30))
+	if err != nil {
+		return spendMsg{err: err}
+	}
+	hourly, err := m.store.HourlyCostSince(now.Add(-24 * time.Hour))
 	if err != nil {
 		return spendMsg{err: err}
 	}
@@ -174,10 +239,17 @@ func (m model) loadSpend() tea.Msg {
 		}
 	}
 
-	return spendMsg{
-		today: today, month: month, projected: projected, daily: daily,
+	msg := spendMsg{
+		today: today, month: month, projected: projected, daily: daily, hourly: hourly,
 		topModels: usage, cacheSaved: saved, cacheExtra: extra, notified: notified,
 	}
+	if m.recorder != nil {
+		msg.feed = m.recorder.Recent(8)
+		msg.sessReq = m.recorder.Requests()
+		msg.sessCost = m.recorder.SessionCost()
+		msg.sessStart = m.recorder.Started()
+	}
+	return msg
 }
 
 func tick() tea.Cmd {
@@ -194,6 +266,12 @@ func (m model) Init() tea.Cmd {
 // --- Update ---
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Track terminal size for every state so the dashboard has it immediately
+	// after onboarding, without waiting for the next resize.
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = ws.Width
+		m.height = ws.Height
+	}
 	switch m.state {
 	case stateOnboarding:
 		return m.updateOnboarding(msg)
@@ -328,6 +406,10 @@ func (m model) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -354,10 +436,16 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.month = msg.month
 			m.projected = msg.projected
 			m.daily = msg.daily
+			m.hourly = msg.hourly
 			m.topModels = msg.topModels
 			m.cacheSaved = msg.cacheSaved
 			m.cacheExtra = msg.cacheExtra
 			m.notified = msg.notified
+			m.feed = msg.feed
+			m.sessReq = msg.sessReq
+			m.sessCost = msg.sessCost
+			m.sessStart = msg.sessStart
+			m.updatedAt = time.Now()
 		}
 	case tickMsg:
 		return m, tea.Batch(m.loadSpend, tick())
@@ -455,132 +543,219 @@ func (m model) viewDone() string {
 }
 
 func (m model) viewDashboard() string {
-	var b strings.Builder
+	width := m.width
+	if width < 72 {
+		width = 92 // sensible default before the first WindowSizeMsg (and in tests)
+	}
 
-	// Title + tab strip + inline nav hint, with a rule underneath so the strip
-	// reads as navigation rather than a heading.
-	b.WriteString(titleStyle.Render("token-tracker"))
-	b.WriteString("   ")
-	b.WriteString("\n")
-	b.WriteString(m.tabBar())
-	b.WriteString("  ")
-	b.WriteString(dimStyle.Render("←/→ or Tab · 1·2·3"))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(strings.Repeat("─", 52)))
-	b.WriteString("\n\n")
+	sidebarContent := m.renderSidebar()
 
+	// Right panel fills the rest. Each panel's border adds 2, so with a
+	// fixed 24-wide sidebar (→ 26 rendered) mainInner = width - 26 - 2.
+	mainInner := width - 28
+	if mainInner < 36 {
+		mainInner = 36
+	}
+	var content string
 	switch m.tab {
 	case tabHistory:
-		b.WriteString(m.renderHistory())
+		content = m.renderHistory(mainInner)
 	case tabAlerts:
-		b.WriteString(m.renderAlerts())
+		content = m.renderAlerts(mainInner)
 	default:
-		b.WriteString(m.renderLive())
+		content = m.renderLive(mainInner)
 	}
 
-	if m.spendErr != "" {
-		fmt.Fprintf(&b, "\n⚠ %s\n", m.spendErr)
+	// Give both panels the same inner height so their bottom borders align and
+	// (when the terminal size is known) they fill the screen like a real app.
+	innerH := lipgloss.Height(sidebarContent)
+	if h := lipgloss.Height(content); h > innerH {
+		innerH = h
 	}
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("←/→ switch tab   ·   r refresh   ·   q quit"))
-	b.WriteString("\n")
+	if m.height > 0 && m.height-4 > innerH {
+		innerH = m.height - 4 // header + footer + top/bottom border
+	}
+
+	sidebar := panelStyle.Width(24).Height(innerH).Render(sidebarContent)
+	main := panelStyle.Width(mainInner).Height(innerH).Render(content)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
+
+	header := brandStyle.Render("● token-tracker")
+	if hint := m.headerHint(); hint != "" {
+		header += "  " + dimStyle.Render(hint)
+	}
+
+	footer := dimStyle.Render("Tab ←/→ switch · 1·2·3 jump · r refresh · q quit")
+
+	return header + "\n" + body + "\n" + footer + "\n"
+}
+
+// headerHint reports how fresh the on-screen figures are.
+func (m model) headerHint() string {
+	if m.updatedAt.IsZero() {
+		return ""
+	}
+	secs := int(time.Since(m.updatedAt).Seconds())
+	if secs <= 0 {
+		return "updated just now"
+	}
+	return fmt.Sprintf("updated %ds ago", secs)
+}
+
+// renderSidebar builds the persistent left column: navigation, at-a-glance
+// spend, this-session burn rate, and proxy status.
+func (m model) renderSidebar() string {
+	var b strings.Builder
+
+	// Navigation — the active tab is highlighted with a caret so it reads as nav.
+	for i, n := range []string{"Live", "History", "Alerts"} {
+		if tab(i) == m.tab {
+			fmt.Fprintf(&b, "%s\n", activeNav.Render(fmt.Sprintf("▸ %-8s", n)))
+		} else {
+			fmt.Fprintf(&b, "%s\n", inactiveNav.Render(fmt.Sprintf("  %-8s", n)))
+		}
+	}
+	rule := faintStyle.Render(strings.Repeat("─", 20))
+
+	// At a glance.
+	fmt.Fprintf(&b, "%s\n%s\n", rule, sectionHeader.Render("At a glance"))
+	fmt.Fprintf(&b, "Today     %s\n", money(m.today))
+	budget := m.cfg.Defaults.MonthlyBudgetUSD
+	if budget > 0 {
+		fmt.Fprintf(&b, "Month     %s\n", money(m.month))
+		fmt.Fprintf(&b, "%s\n", budgetBar(m.month/budget*100, 14))
+	} else {
+		fmt.Fprintf(&b, "Month     %s\n", money(m.month))
+	}
+	fmt.Fprintf(&b, "Projected %s\n", money(m.projected))
+
+	// This session (from the in-process proxy recorder).
+	fmt.Fprintf(&b, "%s\n%s\n", rule, sectionHeader.Render("This session"))
+	fmt.Fprintf(&b, "Spend     %s\n", money(m.sessCost))
+	fmt.Fprintf(&b, "Requests  %d\n", m.sessReq)
+	fmt.Fprintf(&b, "Burn      %s/hr\n", money(m.burnPerHour()))
+
+	// Proxy status.
+	b.WriteString(rule + "\n")
+	if m.cfg.Proxy.Enabled {
+		fmt.Fprintf(&b, "%s Proxy on\n%s",
+			statusDot(true), dimStyle.Render(app.ProxyListen(m.cfg)))
+	} else {
+		fmt.Fprintf(&b, "%s Proxy off", statusDot(false))
+	}
 	return b.String()
 }
 
-// tabBar renders Live/History/Alerts as tabs — the active one highlighted, each
-// prefixed with its number key so the shortcut is obvious.
-func (m model) tabBar() string {
-	names := []string{"Live", "History", "Alerts"}
-	tabs := make([]string, len(names))
-	for i, n := range names {
-		label := fmt.Sprintf("%d %s", i+1, n)
-		if tab(i) == m.tab {
-			tabs[i] = activeTab.Render(label)
-		} else {
-			tabs[i] = inactiveTab.Render(label)
-		}
-	}
-	return strings.Join(tabs, " ")
-}
-
-func (m model) renderLive() string {
+func (m model) renderLive(width int) string {
 	var b strings.Builder
 
-	// --- Spend ---
-	fmt.Fprintf(&b, "%s\n", sectionHeader.Render("Spend"))
-	fmt.Fprintf(&b, "  Today      $%.2f\n", m.today)
-	budget := m.cfg.Defaults.MonthlyBudgetUSD
-	if budget > 0 {
-		pct := m.month / budget * 100
-		flag := ""
-		if pct >= 90 {
-			flag = "  ⚠"
-		}
-		fmt.Fprintf(&b, "  Month      $%.2f / $%.0f   %s%s\n", m.month, budget, progressBar(pct), flag)
+	// --- 24h trend sparkline ---
+	fmt.Fprintf(&b, "%s\n  %s\n", sectionHeader.Render("24h trend"), m.sparkline())
+
+	// --- Live activity feed ---
+	fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Live activity"))
+	if len(m.feed) == 0 {
+		fmt.Fprintf(&b, "  %s\n", dimStyle.Render("waiting for requests…"))
 	} else {
-		fmt.Fprintf(&b, "  Month      $%.2f\n", m.month)
+		for _, e := range m.feed {
+			name := e.Model
+			if len(name) > 22 {
+				name = name[:21] + "…"
+			}
+			// Pad provider tag with plain spaces so ANSI color codes don't skew
+			// column alignment.
+			prov := providerTag(e.Provider)
+			if pad := 10 - len(e.Provider); pad > 0 {
+				prov += strings.Repeat(" ", pad)
+			}
+			fmt.Fprintf(&b, "  %s  %s  %-22s %s\n",
+				dimStyle.Render(e.At.Format("15:04:05")), prov, name, money(e.CostUSD))
+		}
 	}
-	fmt.Fprintf(&b, "  Projected  $%.2f  (at current rate)\n", m.projected)
 
 	// --- Top models (this month) ---
 	if len(m.topModels) > 0 {
 		fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Top models (this month)"))
-		max := m.topModels[0].CostUSD // rows are cost-desc
+		maxCost := m.topModels[0].CostUSD // rows are cost-desc
 		for i, u := range m.topModels {
 			if i >= 5 {
 				break
 			}
 			name := u.Provider + "/" + u.Model
-			if len(name) > 30 {
-				name = name[:29] + "…"
+			if len(name) > 28 {
+				name = name[:27] + "…"
 			}
 			bars := 0
-			if max > 0 {
-				bars = int(u.CostUSD / max * 12)
+			if maxCost > 0 {
+				bars = int(u.CostUSD / maxCost * 12)
 			}
 			perM := 0.0
 			if tot := u.Input + u.Cached + u.CacheWrite + u.Output; tot > 0 {
 				perM = u.CostUSD / float64(tot) * 1_000_000
 			}
-			fmt.Fprintf(&b, "  %-30s $%7.2f  %-12s $%.2f/M\n",
-				name, u.CostUSD, strings.Repeat("▓", bars), perM)
+			bar := lipgloss.NewStyle().Foreground(clrAccent).Render(strings.Repeat("▓", bars))
+			fmt.Fprintf(&b, "  %-28s $%7.2f  %-12s $%.2f/M\n", name, u.CostUSD, bar, perM)
 		}
 	}
 
 	// --- Cache impact (this month) ---
 	if m.engine != nil && (m.cacheSaved > 0 || m.cacheExtra > 0) {
 		fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Cache impact (this month)"))
-		fmt.Fprintf(&b, "  Saved via cache reads:   $%.2f\n", m.cacheSaved)
-		fmt.Fprintf(&b, "  Extra via cache writes:  $%.2f\n", m.cacheExtra)
-		fmt.Fprintf(&b, "  Net cache effect:        %+.2f\n", m.cacheExtra-m.cacheSaved)
+		fmt.Fprintf(&b, "  Saved via cache reads:   %s\n",
+			lipgloss.NewStyle().Foreground(clrGreen).Render(money(m.cacheSaved)))
+		fmt.Fprintf(&b, "  Extra via cache writes:  %s\n", money(m.cacheExtra))
+		net := m.cacheExtra - m.cacheSaved
+		netColor := clrGreen // net saving (negative) is good
+		if net > 0 {
+			netColor = clrYellow
+		}
+		fmt.Fprintf(&b, "  Net cache effect:        %s\n",
+			lipgloss.NewStyle().Foreground(netColor).Render(fmt.Sprintf("%+.2f", net)))
 	}
-
-	// --- Proxy ---
-	listen := app.ProxyListen(m.cfg)
-	fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Proxy"))
-	if m.cfg.Proxy.Enabled {
-		fmt.Fprintf(&b, "  ✓ listening on %s\n", listen)
-	} else {
-		b.WriteString("  ✗ off — run `tt proxy`, or set proxy.enabled: true\n")
-	}
-	provs := make([]string, 0)
-	for name := range app.ProxyUpstreams(m.cfg) {
-		provs = append(provs, name)
-	}
-	sort.Strings(provs)
-	fmt.Fprintf(&b, "  point a tool's base URL at  http://%s/<provider>/…\n", listen)
-	fmt.Fprintf(&b, "  providers: %s\n", strings.Join(provs, " · "))
 
 	// --- Empty state ---
-	if m.today == 0 && m.month == 0 && len(m.daily) == 0 {
-		b.WriteString("\nNo usage recorded yet — run a tool through the proxy and spend appears here.\n")
+	if m.today == 0 && m.month == 0 && len(m.daily) == 0 && len(m.feed) == 0 {
+		fmt.Fprintf(&b, "\n%s\n", dimStyle.Render(
+			"No usage yet — point a harness at the proxy and spend appears here."))
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m model) renderHistory() string {
+// sparkline renders the last-24h hourly cost trend as a compact block chart.
+func (m model) sparkline() string {
+	vals := make([]float64, 0, len(m.hourly))
+	for _, h := range m.hourly {
+		vals = append(vals, h.CostUSD)
+	}
+	if len(vals) == 0 {
+		return dimStyle.Render("no activity in the last 24h")
+	}
+	if len(vals) > 24 {
+		vals = vals[len(vals)-24:]
+	}
+	maxV := 0.0
+	for _, v := range vals {
+		if v > maxV {
+			maxV = v
+		}
+	}
+	var total float64
+	var sb strings.Builder
+	for _, v := range vals {
+		total += v
+		level := 0
+		if maxV > 0 {
+			level = int(v / maxV * float64(len(sparkLevels)-1))
+		}
+		sb.WriteRune(sparkLevels[level])
+	}
+	spark := lipgloss.NewStyle().Foreground(clrAccent).Render(sb.String())
+	return fmt.Sprintf("%s  %s total", spark, money(total))
+}
+
+func (m model) renderHistory(width int) string {
 	if len(m.daily) == 0 {
-		return "No usage recorded in the last 30 days."
+		return dimStyle.Render("No usage recorded in the last 30 days.")
 	}
 	maxCost := 0.0
 	for _, d := range m.daily {
@@ -589,63 +764,108 @@ func (m model) renderHistory() string {
 		}
 	}
 
+	barW := width - 18
+	if barW < 10 {
+		barW = 10
+	}
+	barStyle := lipgloss.NewStyle().Foreground(clrAccent)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", sectionHeader.Render("Daily cost — last 30 days"))
-	const width = 30
 	for _, d := range m.daily {
 		bars := 0
 		if maxCost > 0 {
-			bars = int(d.CostUSD / maxCost * width)
+			bars = int(d.CostUSD / maxCost * float64(barW))
 		}
 		// Show the MM-DD suffix of the YYYY-MM-DD day string.
 		label := d.Day
 		if len(label) >= 5 {
 			label = label[len(label)-5:]
 		}
-		fmt.Fprintf(&b, "%s  %s %7.2f\n", label, strings.Repeat("▓", bars), d.CostUSD)
+		fmt.Fprintf(&b, "%s  %s %7.2f\n", label, barStyle.Render(strings.Repeat("▓", bars)), d.CostUSD)
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m model) renderAlerts() string {
+func (m model) renderAlerts(width int) string {
 	var b strings.Builder
 	budget := m.cfg.Defaults.MonthlyBudgetUSD
 	if budget <= 0 {
-		return "No monthly budget configured (defaults.monthly_budget_usd).\nSet one in config.yaml to enable alerts."
+		return dimStyle.Render(
+			"No monthly budget configured (defaults.monthly_budget_usd).\n" +
+				"Set one in config.yaml to enable alerts.")
 	}
 
 	pct := m.projected / budget * 100
 	fmt.Fprintf(&b, "Monthly budget:  $%.0f\n", budget)
-	fmt.Fprintf(&b, "Projected spend: $%.2f (%.0f%% of budget)\n\n", m.projected, pct)
+	fmt.Fprintf(&b, "Projected spend: $%.2f (%.0f%% of budget)\n", m.projected, pct)
+	fmt.Fprintf(&b, "%s\n\n", budgetBar(pct, 24))
 	b.WriteString("Thresholds:\n")
 
 	thresholds := m.cfg.Defaults.AlertThresholds
 	if len(thresholds) == 0 {
-		b.WriteString("  (none configured)\n")
+		b.WriteString("  (none configured)")
 		return b.String()
 	}
 	for _, t := range thresholds {
-		mark, note := "○", "not yet"
+		mark, note, color := "○", "not yet", clrDim
 		if int(pct) >= t {
-			mark = "✓"
-			note = "crossed"
+			mark, note, color = "✓", "crossed", clrYellow
 		}
 		if t <= m.notified {
 			note += ", notified"
 		}
-		fmt.Fprintf(&b, "  %s  %3d%%   %s\n", mark, t, note)
+		fmt.Fprintf(&b, "  %s  %3d%%   %s\n",
+			lipgloss.NewStyle().Foreground(color).Render(mark), t,
+			lipgloss.NewStyle().Foreground(color).Render(note))
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
-// progressBar renders a 10-cell bar for a 0-100 percentage.
-func progressBar(pct float64) string {
+// burnPerHour extrapolates this session's spend to an hourly rate.
+func (m model) burnPerHour() float64 {
+	if m.sessStart.IsZero() {
+		return 0
+	}
+	h := time.Since(m.sessStart).Hours()
+	if h < 1.0/60 { // < 1 minute in: too little signal to extrapolate
+		return 0
+	}
+	return m.sessCost / h
+}
+
+func money(v float64) string { return fmt.Sprintf("$%.2f", v) }
+
+// statusDot returns a colored ● — green when on, red when off.
+func statusDot(on bool) string {
+	c := clrRed
+	if on {
+		c = clrGreen
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("●")
+}
+
+// budgetBar renders a color-graded bar (green→yellow→red) for a 0-100+ percentage.
+func budgetBar(pct float64, width int) string {
 	if pct < 0 {
 		pct = 0
 	}
-	if pct > 100 {
-		pct = 100
+	shown := pct
+	if shown > 100 {
+		shown = 100
 	}
-	filled := int(pct / 10)
-	return "[" + strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled) + fmt.Sprintf("] %.0f%%", pct)
+	filled := int(shown / 100 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	color := clrGreen
+	switch {
+	case pct >= 90:
+		color = clrRed
+	case pct >= 50:
+		color = clrYellow
+	}
+	bar := lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("█", filled)) +
+		faintStyle.Render(strings.Repeat("░", width-filled))
+	return fmt.Sprintf("%s %.0f%%", bar, pct)
 }

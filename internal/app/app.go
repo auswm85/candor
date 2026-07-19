@@ -79,9 +79,14 @@ func BuildEngine(cfg *config.Config) *cost.Engine {
 	return cost.New(priceTable(cfg))
 }
 
-// BuildProxy constructs the live-usage proxy handler backed by the store.
-func BuildProxy(cfg *config.Config, st *store.Store) *proxy.Proxy {
-	rec := proxy.NewRecorder(st, cost.New(priceTable(cfg)))
+// BuildRecorder constructs the proxy usage recorder (shared with the TUI so it
+// can show the live activity feed and burn rate).
+func BuildRecorder(cfg *config.Config, st *store.Store) *proxy.Recorder {
+	return proxy.NewRecorder(st, cost.New(priceTable(cfg)))
+}
+
+// BuildProxy constructs the live-usage proxy handler around a recorder.
+func BuildProxy(cfg *config.Config, rec *proxy.Recorder) *proxy.Proxy {
 	maxBody := cfg.Proxy.MaxBodyBytes
 	if maxBody == 0 {
 		maxBody = 16 << 20 // 16 MiB default

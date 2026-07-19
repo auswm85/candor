@@ -175,8 +175,9 @@ func TestDashboardWhenConfigured(t *testing.T) {
 	if m.state != stateDashboard {
 		t.Fatalf("expected stateDashboard when keys exist, got %v", m.state)
 	}
+	// Dashboard chrome (not onboarding) should render.
 	view := m.View()
-	if !strings.Contains(view, "openai") {
-		t.Errorf("expected openai in dashboard, got: %s", view)
+	if !strings.Contains(view, "token-tracker") || !strings.Contains(view, "At a glance") {
+		t.Errorf("expected dashboard, got: %s", view)
 	}
 }
