@@ -3,7 +3,6 @@ package proxy
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -11,9 +10,9 @@ import (
 )
 
 // Proxy is a transparent reverse proxy. The first path segment selects the
-// upstream provider (e.g. POST /openai/v1/chat/completions forwards to
-// https://api.openai.com/v1/chat/completions), and token usage is tapped from
-// each response and handed to the recorder.
+// upstream provider (e.g. POST /anthropic/v1/messages forwards to
+// https://api.anthropic.com/v1/messages), and token usage is tapped from each
+// response — using a provider-appropriate extractor — and handed to the recorder.
 type Proxy struct {
 	upstreams map[string]string // provider name -> upstream base URL
 	recorder  *Recorder
@@ -35,15 +34,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "unknown provider prefix; expected /<provider>/... where provider is one of the configured upstreams", http.StatusNotFound)
 		return
 	}
+	ext := extractorFor(provider)
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// For streaming chat requests, make sure the provider includes a final usage
-	// chunk (OpenAI omits it unless asked).
-	body = ensureStreamUsage(body)
+	body = ext.PrepareRequestBody(body)
 
 	target := strings.TrimSuffix(upstream, "/") + rest
 	if req.URL.RawQuery != "" {
@@ -80,11 +78,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	var usage *Usage
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		usage = streamThrough(w, resp.Body)
+		acc := ext.NewStream()
+		streamThrough(w, resp.Body, acc)
+		usage = acc.Usage()
 	} else {
 		respBody, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write(respBody)
-		usage = parseJSONUsage(respBody)
+		usage = ext.NonStreaming(respBody)
 	}
 
 	if usage != nil && p.recorder != nil {
@@ -94,7 +94,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// splitProvider separates "/openai/v1/chat/completions" into ("openai", "/v1/chat/completions").
+// splitProvider separates "/anthropic/v1/messages" into ("anthropic", "/v1/messages").
 func splitProvider(path string) (provider, rest string) {
 	trimmed := strings.TrimPrefix(path, "/")
 	if i := strings.IndexByte(trimmed, '/'); i >= 0 {
@@ -103,52 +103,11 @@ func splitProvider(path string) (provider, rest string) {
 	return trimmed, "/"
 }
 
-// --- usage extraction (OpenAI-compatible) ---
-
-type openaiUsage struct {
-	PromptTokens        int64 `json:"prompt_tokens"`
-	CompletionTokens    int64 `json:"completion_tokens"`
-	PromptTokensDetails struct {
-		CachedTokens int64 `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	Cost float64 `json:"cost"` // OpenRouter includes a USD cost; OpenAI does not
-}
-
-type openaiResponse struct {
-	Model string       `json:"model"`
-	Usage *openaiUsage `json:"usage"`
-}
-
-func toUsage(model string, u *openaiUsage) Usage {
-	cached := u.PromptTokensDetails.CachedTokens
-	input := u.PromptTokens - cached // OpenAI's prompt_tokens includes cached
-	if input < 0 {
-		input = 0
-	}
-	return Usage{
-		Model:             model,
-		InputTokens:       input,
-		CachedInputTokens: cached,
-		OutputTokens:      u.CompletionTokens,
-		CostUSD:           u.Cost,
-	}
-}
-
-func parseJSONUsage(body []byte) *Usage {
-	var r openaiResponse
-	if err := json.Unmarshal(body, &r); err != nil || r.Usage == nil {
-		return nil
-	}
-	u := toUsage(r.Model, r.Usage)
-	return &u
-}
-
-// streamThrough forwards an SSE body to the client byte-for-byte while parsing
-// each `data:` line for the usage chunk (which arrives last).
-func streamThrough(w http.ResponseWriter, body io.Reader) *Usage {
+// streamThrough forwards an SSE body to the client byte-for-byte while feeding
+// each line to the accumulator so usage can be parsed as it streams.
+func streamThrough(w http.ResponseWriter, body io.Reader, acc StreamAccumulator) {
 	flusher, _ := w.(http.Flusher)
 	br := bufio.NewReader(body)
-	var usage *Usage
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
@@ -156,45 +115,10 @@ func streamThrough(w http.ResponseWriter, body io.Reader) *Usage {
 			if flusher != nil {
 				flusher.Flush()
 			}
-			if bytes.HasPrefix(line, []byte("data:")) {
-				payload := bytes.TrimSpace(line[len("data:"):])
-				if len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]")) {
-					if u := parseJSONUsage(payload); u != nil {
-						usage = u
-					}
-				}
-			}
+			acc.Line(line)
 		}
 		if err != nil {
 			break
 		}
 	}
-	return usage
-}
-
-// ensureStreamUsage injects stream_options.include_usage=true into a streaming
-// chat request so the provider emits a final usage chunk. Non-streaming or
-// non-JSON bodies are returned unchanged.
-func ensureStreamUsage(body []byte) []byte {
-	if len(body) == 0 {
-		return body
-	}
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body
-	}
-	streaming, _ := m["stream"].(bool)
-	if !streaming {
-		return body
-	}
-	opts, _ := m["stream_options"].(map[string]any)
-	if opts == nil {
-		opts = map[string]any{}
-	}
-	opts["include_usage"] = true
-	m["stream_options"] = opts
-	if nb, err := json.Marshal(m); err == nil {
-		return nb
-	}
-	return body
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/auswm85/token-tracker/internal/store"
 )
 
-func newProxy(t *testing.T, upstream string) (*Proxy, *store.Store) {
+func newProxy(t *testing.T, provider, upstream string) (*Proxy, *store.Store) {
 	t.Helper()
 	st, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {
@@ -22,9 +22,12 @@ func newProxy(t *testing.T, upstream string) (*Proxy, *store.Store) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	prices := cost.Prices{"openai": {"gpt-4o": {InputPer1M: 2.50, CachedInputPer1M: 0.3125, OutputPer1M: 10.00}}}
+	prices := cost.Prices{
+		"openai":    {"gpt-4o": {InputPer1M: 2.50, CachedInputPer1M: 0.3125, OutputPer1M: 10.00}},
+		"anthropic": {"claude-sonnet-4-5": {InputPer1M: 3.00, CachedInputPer1M: 0.30, CacheWritePer1M: 3.75, OutputPer1M: 15.00}},
+	}
 	rec := NewRecorder(st, cost.New(prices))
-	return NewProxy(map[string]string{"openai": upstream}, rec), st
+	return NewProxy(map[string]string{provider: upstream}, rec), st
 }
 
 func TestProxy_NonStreamingCapturesUsageAndForwards(t *testing.T) {
@@ -40,7 +43,7 @@ func TestProxy_NonStreamingCapturesUsageAndForwards(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	p, st := newProxy(t, upstream.URL)
+	p, st := newProxy(t, "openai", upstream.URL)
 	front := httptest.NewServer(p)
 	defer front.Close()
 
@@ -90,7 +93,7 @@ func TestProxy_StreamingCapturesFinalUsageChunk(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	p, st := newProxy(t, upstream.URL)
+	p, st := newProxy(t, "openai", upstream.URL)
 	front := httptest.NewServer(p)
 	defer front.Close()
 
@@ -113,5 +116,82 @@ func TestProxy_StreamingCapturesFinalUsageChunk(t *testing.T) {
 	// cost = 100/1e6*2.50 + 40/1e6*10 = 0.00025 + 0.0004 = 0.00065
 	if diff := total - 0.00065; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("stored cost = %v, want 0.00065", total)
+	}
+}
+
+func TestProxy_AnthropicNonStreamingCachesTokens(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("upstream path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":300,"cache_read_input_tokens":400,"cache_creation_input_tokens":200}}`))
+	}))
+	defer upstream.Close()
+
+	p, st := newProxy(t, "anthropic", upstream.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/anthropic/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[]}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	rows, _ := st.UsageSince(time.Now().Add(-time.Hour))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.InputTokens != 1000 || r.CachedInputTokens != 400 || r.CacheWriteTokens != 200 || r.OutputTokens != 300 {
+		t.Errorf("tokens in=%d cached=%d write=%d out=%d", r.InputTokens, r.CachedInputTokens, r.CacheWriteTokens, r.OutputTokens)
+	}
+	// cost = 1000/1e6*3 + 400/1e6*0.30 + 200/1e6*3.75 + 300/1e6*15
+	//      = 0.003 + 0.00012 + 0.00075 + 0.0045 = 0.00837
+	if diff := r.CostUSD - 0.00837; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("cost = %v, want 0.00837", r.CostUSD)
+	}
+}
+
+func TestProxy_AnthropicStreamingCombinesEvents(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		// input + cache tokens arrive in message_start; final output in message_delta.
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":1000,\"cache_read_input_tokens\":400,\"cache_creation_input_tokens\":200,\"output_tokens\":1}}}\n\n"))
+		if fl != nil {
+			fl.Flush()
+		}
+		_, _ = w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":300}}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer upstream.Close()
+
+	p, st := newProxy(t, "anthropic", upstream.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/anthropic/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-4-5","stream":true,"messages":[]}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "message_stop") {
+		t.Errorf("stream not forwarded intact")
+	}
+
+	rows, _ := st.UsageSince(time.Now().Add(-time.Hour))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.InputTokens != 1000 || r.CachedInputTokens != 400 || r.CacheWriteTokens != 200 || r.OutputTokens != 300 {
+		t.Errorf("combined tokens wrong: in=%d cached=%d write=%d out=%d", r.InputTokens, r.CachedInputTokens, r.CacheWriteTokens, r.OutputTokens)
 	}
 }
