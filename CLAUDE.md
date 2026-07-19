@@ -21,6 +21,7 @@ go run ./cmd/token-tracker     # launch daemon: TUI + proxy (proxy.enabled defau
 
 # tt subcommands
 go run ./cmd/tt run -- claude   # run a harness with its LLM traffic routed through the proxy (per-process, nothing persistent; falls back to direct if the proxy is down)
+go run ./cmd/tt tui            # dashboard as a read-only viewer, attached to a running proxy via /stats
 go run ./cmd/tt proxy          # run the live-usage proxy standalone
 go run ./cmd/tt daemon         # headless poll loop (no TUI)
 go run ./cmd/tt spend today    # today's spend  (also: spend month --by-model)

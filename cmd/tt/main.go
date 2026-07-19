@@ -21,6 +21,7 @@ import (
 	"github.com/auswm85/token-tracker/internal/config"
 	"github.com/auswm85/token-tracker/internal/lock"
 	"github.com/auswm85/token-tracker/internal/store"
+	"github.com/auswm85/token-tracker/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -498,6 +499,35 @@ usage just isn't recorded, so it never breaks your workflow.
 	},
 }
 
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Open the dashboard as a read-only viewer attached to a running proxy",
+	Long: `Open the live dashboard without starting a proxy. It reads persisted spend
+from the database and pulls the live activity feed + session burn rate from a
+running proxy's /stats endpoint (start one with ` + "`token-tracker`" + ` or the
+background service). Safe to run in a separate shell alongside the proxy.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		st, err := store.Open(cfg.Database)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		statsURL := "http://" + app.ProxyListen(cfg) + "/stats"
+		m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg)).WithStatsURL(statsURL)
+		if _, err := tui.NewProgram(m, nil).Run(); err != nil {
+			return fmt.Errorf("tui: %w", err)
+		}
+		return nil
+	},
+}
+
 func init() {
 	authCmd.Flags().Bool("list", false, "List configured providers")
 	spendCmd.Flags().Bool("by-model", false, "Break spend down by model")
@@ -514,6 +544,7 @@ func init() {
 	rootCmd.AddCommand(serviceCmd)
 	rootCmd.AddCommand(proxyCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(tuiCmd)
 }
 
 func main() {

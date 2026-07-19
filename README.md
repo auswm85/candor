@@ -48,14 +48,20 @@ Code** or **OpenCode** as it works — run the transparent proxy and point the
 tool's base URL at it. Your normal inference key is forwarded untouched (no admin
 key needed), and usage is recorded as each response streams back.
 
-```sh
-# Standalone:
-tt proxy
+Two ways to run it:
 
-# ...or fold it into the daemon so one process runs proxy + TUI:
-#   config.yaml → proxy.enabled: true
+```sh
+# All-in-one: proxy + live dashboard in one terminal
 token-tracker
+
+# ...or run the proxy as an always-on background service and open the dashboard
+# on demand from any shell (it attaches to the running proxy over /stats):
+tt proxy          # or install the launchd/systemd unit: tt service
+tt tui            # read-only viewer — live feed + burn rate included
 ```
+
+`token-tracker` auto-detects an already-running proxy and attaches as a viewer
+instead of binding a second one, so either workflow just works.
 
 **Recommended: `tt run` (nothing persistent).** Wrap your harness and its LLM
 traffic is routed through the proxy for that run only — no global config, nothing

@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +92,8 @@ type model struct {
 	alerter  *alert.Checker
 	store    *store.Store
 	engine   *cost.Engine
-	recorder *proxy.Recorder
+	recorder *proxy.Recorder // in-process live data (all-in-one mode)
+	statsURL string          // remote proxy /stats (viewer mode); used when recorder is nil
 	state    state
 	step     step
 
@@ -155,6 +158,14 @@ func (m model) WithEngine(e *cost.Engine) model {
 // the live activity feed and session burn rate without a DB round-trip.
 func (m model) WithRecorder(r *proxy.Recorder) model {
 	m.recorder = r
+	return m
+}
+
+// WithStatsURL points the dashboard at a running proxy's /stats endpoint for
+// live data — used by the detached viewer (`tt tui`) when there's no in-process
+// recorder.
+func (m model) WithStatsURL(url string) model {
+	m.statsURL = url
 	return m
 }
 
@@ -243,13 +254,46 @@ func (m model) loadSpend() tea.Msg {
 		today: today, month: month, projected: projected, daily: daily, hourly: hourly,
 		topModels: usage, cacheSaved: saved, cacheExtra: extra, notified: notified,
 	}
+	// Live session data comes from the in-process recorder (all-in-one mode) or,
+	// when detached, from a running proxy's /stats endpoint (viewer mode).
+	var stats *proxy.Stats
 	if m.recorder != nil {
-		msg.feed = m.recorder.Recent(8)
-		msg.sessReq = m.recorder.Requests()
-		msg.sessCost = m.recorder.SessionCost()
-		msg.sessStart = m.recorder.Started()
+		s := m.recorder.Snapshot(8)
+		stats = &s
+	} else if m.statsURL != "" {
+		if s, err := fetchStats(m.statsURL); err == nil {
+			stats = &s
+		}
+	}
+	if stats != nil {
+		feed := stats.Recent
+		if len(feed) > 8 {
+			feed = feed[:8]
+		}
+		msg.feed = feed
+		msg.sessReq = stats.Requests
+		msg.sessCost = stats.SessionCost
+		msg.sessStart = stats.Started
 	}
 	return msg
+}
+
+// fetchStats pulls the live session snapshot from a running proxy's /stats.
+func fetchStats(url string) (proxy.Stats, error) {
+	client := &http.Client{Timeout: 800 * time.Millisecond}
+	resp, err := client.Get(url)
+	if err != nil {
+		return proxy.Stats{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return proxy.Stats{}, fmt.Errorf("stats: %s", resp.Status)
+	}
+	var s proxy.Stats
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return proxy.Stats{}, err
+	}
+	return s, nil
 }
 
 func tick() tea.Cmd {

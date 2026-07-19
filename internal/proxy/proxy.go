@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"net"
@@ -60,6 +61,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.URL.Path == "/healthz" {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
+		return
+	}
+
+	// Live session stats for a detached TUI viewer attached to this proxy.
+	if req.URL.Path == "/stats" {
+		w.Header().Set("Content-Type", "application/json")
+		var s Stats
+		if p.recorder != nil {
+			s = p.recorder.Snapshot(statsFeedSize)
+		}
+		_ = json.NewEncoder(w).Encode(s)
 		return
 	}
 

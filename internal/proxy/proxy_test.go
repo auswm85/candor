@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -121,6 +122,58 @@ func TestProxy_NonStreamingCapturesUsageAndForwards(t *testing.T) {
 	rows, _ := st.CostByModelSince(time.Now().Add(-time.Hour))
 	if len(rows) != 1 || rows[0].Provider != "openai" || rows[0].Model != "gpt-4o" {
 		t.Errorf("stored rows = %+v", rows)
+	}
+}
+
+func TestProxy_StatsEndpointReflectsRecordedRequests(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt-4o","usage":{"prompt_tokens":1000,"completion_tokens":500}}`))
+	}))
+	defer upstream.Close()
+
+	p, _ := newProxy(t, "openai", upstream.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	// Before any traffic, /stats reports an empty session.
+	var s0 Stats
+	getJSON(t, front.URL+"/stats", &s0)
+	if s0.Requests != 0 || len(s0.Recent) != 0 {
+		t.Fatalf("empty stats = %+v", s0)
+	}
+
+	req, _ := http.NewRequest("POST", front.URL+"/openai/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var s1 Stats
+	getJSON(t, front.URL+"/stats", &s1)
+	if s1.Requests != 1 {
+		t.Fatalf("requests = %d, want 1", s1.Requests)
+	}
+	if len(s1.Recent) != 1 || s1.Recent[0].Provider != "openai" || s1.Recent[0].Model != "gpt-4o" {
+		t.Fatalf("recent = %+v", s1.Recent)
+	}
+	if s1.SessionCost <= 0 {
+		t.Fatalf("session cost = %v, want > 0", s1.SessionCost)
+	}
+}
+
+func getJSON(t *testing.T, url string, v any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatal(err)
 	}
 }
 

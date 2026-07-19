@@ -65,16 +65,26 @@ func main() {
 		go scheduler.Start(ctx)
 	}
 
-	// One recorder shared by the proxy (writes) and the TUI (reads the live feed).
-	rec := app.BuildRecorder(cfg, st)
+	listen := app.ProxyListen(cfg)
+	m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg))
 
-	// Start the live-usage proxy alongside the TUI when enabled.
-	if cfg.Proxy.Enabled {
-		if err := app.ValidateProxyListen(app.ProxyListen(cfg), cfg.Proxy.AllowNonLoopback); err != nil {
+	// Start the live-usage proxy alongside the TUI — unless one is already
+	// running (e.g. a background service), in which case attach the dashboard to
+	// it as a viewer via /stats instead of binding a second proxy.
+	switch {
+	case !cfg.Proxy.Enabled:
+		// proxy disabled: dashboard shows persisted data only
+	case app.ProxyHealthy(listen, 300*time.Millisecond):
+		log.Printf("proxy already running at %s; dashboard attaching as viewer", listen)
+		m = m.WithStatsURL("http://" + listen + "/stats")
+	default:
+		if err := app.ValidateProxyListen(listen, cfg.Proxy.AllowNonLoopback); err != nil {
 			log.Fatalf("proxy: %v", err)
 		}
+		rec := app.BuildRecorder(cfg, st)
+		m = m.WithRecorder(rec)
 		proxySrv := &http.Server{
-			Addr:              app.ProxyListen(cfg),
+			Addr:              listen,
 			Handler:           app.BuildProxy(cfg, rec),
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       120 * time.Second,
@@ -98,8 +108,6 @@ func main() {
 	}
 
 	alerter := alert.New(cfg, st)
-
-	m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg)).WithRecorder(rec)
 	p := tui.NewProgram(m, alerter)
 
 	go func() {

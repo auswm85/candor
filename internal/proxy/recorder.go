@@ -23,19 +23,33 @@ type Usage struct {
 	CostUSD float64
 }
 
-// Event is a single recorded request, kept in an in-memory ring for the live TUI.
+// Event is a single recorded request, kept in an in-memory ring for the live
+// TUI. JSON-tagged so it can be served over /stats to a detached viewer.
 type Event struct {
-	At         time.Time
-	Provider   string
-	Model      string
-	Input      int64
-	Cached     int64
-	CacheWrite int64
-	Output     int64
-	CostUSD    float64
+	At         time.Time `json:"at"`
+	Provider   string    `json:"provider"`
+	Model      string    `json:"model"`
+	Input      int64     `json:"input"`
+	Cached     int64     `json:"cached"`
+	CacheWrite int64     `json:"cache_write"`
+	Output     int64     `json:"output"`
+	CostUSD    float64   `json:"cost_usd"`
+}
+
+// Stats is a point-in-time snapshot of live session activity. The proxy serves
+// it over /stats so a TUI running in a separate process (attached to a
+// background proxy) can show the feed and burn rate without in-process access.
+type Stats struct {
+	Requests    int       `json:"requests"`
+	SessionCost float64   `json:"session_cost"`
+	Started     time.Time `json:"started"`
+	Recent      []Event   `json:"recent"` // newest first
 }
 
 const ringSize = 256
+
+// statsFeedSize is how many recent events the /stats endpoint returns.
+const statsFeedSize = 32
 
 // Recorder turns extracted usage into a stored, costed usage row, and keeps a
 // ring of recent events + a session counter for the live dashboard.
@@ -56,36 +70,25 @@ func NewRecorder(st *store.Store, engine *cost.Engine) *Recorder {
 	return &Recorder{store: st, engine: engine, nowFn: time.Now, started: time.Now()}
 }
 
-// Recent returns up to n most-recent events, newest first.
-func (r *Recorder) Recent(n int) []Event {
+// Snapshot returns the current session stats plus up to n most-recent events
+// (newest first). Used both by the in-process TUI and the /stats endpoint.
+func (r *Recorder) Snapshot(n int) Stats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if n > len(r.ring) {
 		n = len(r.ring)
 	}
-	out := make([]Event, n)
+	recent := make([]Event, n)
 	for i := 0; i < n; i++ {
-		out[i] = r.ring[len(r.ring)-1-i]
+		recent[i] = r.ring[len(r.ring)-1-i]
 	}
-	return out
+	return Stats{
+		Requests:    r.requests,
+		SessionCost: r.sessionCost,
+		Started:     r.started,
+		Recent:      recent,
+	}
 }
-
-// Requests is the number of requests recorded since the process started.
-func (r *Recorder) Requests() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.requests
-}
-
-// SessionCost is the cumulative USD recorded since the process started.
-func (r *Recorder) SessionCost() float64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.sessionCost
-}
-
-// Started reports when this recorder (this daemon session) began.
-func (r *Recorder) Started() time.Time { return r.started }
 
 // providerID / modelID memoize the upsert+lookup so a busy proxy doesn't hit the
 // DB for IDs on every request (they never change once created).
