@@ -14,8 +14,38 @@ import (
 	"github.com/auswm85/token-tracker/internal/provider/anthropic"
 	"github.com/auswm85/token-tracker/internal/provider/openai"
 	"github.com/auswm85/token-tracker/internal/provider/openrouter"
+	"github.com/auswm85/token-tracker/internal/proxy"
 	"github.com/auswm85/token-tracker/internal/store"
 )
+
+// defaultUpstreams is the fallback provider→base-URL map when config omits it.
+var defaultUpstreams = map[string]string{
+	"openai":     "https://api.openai.com",
+	"openrouter": "https://openrouter.ai",
+	"anthropic":  "https://api.anthropic.com",
+}
+
+// ProxyUpstreams returns the configured upstreams, or built-in defaults.
+func ProxyUpstreams(cfg *config.Config) map[string]string {
+	if len(cfg.Proxy.Upstreams) > 0 {
+		return cfg.Proxy.Upstreams
+	}
+	return defaultUpstreams
+}
+
+// ProxyListen returns the configured proxy listen address, or the default.
+func ProxyListen(cfg *config.Config) string {
+	if cfg.Proxy.Listen != "" {
+		return cfg.Proxy.Listen
+	}
+	return "127.0.0.1:7879"
+}
+
+// BuildProxy constructs the live-usage proxy handler backed by the store.
+func BuildProxy(cfg *config.Config, st *store.Store) *proxy.Proxy {
+	rec := proxy.NewRecorder(st, cost.New(cost.DefaultPrices()))
+	return proxy.NewProxy(ProxyUpstreams(cfg), rec)
+}
 
 // BuildProviders constructs an adapter for each enabled provider that has a
 // stored API key.

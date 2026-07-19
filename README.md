@@ -43,6 +43,38 @@ Budget alerts are configured in `config.yaml` (`defaults.monthly_budget_usd` and
 `defaults.alert_thresholds`); the daemon fires an OS notification the first time
 projected spend crosses each threshold in a month.
 
+## Live tracking (proxy mode)
+
+For real-time, per-request cost — e.g. watching a coding harness like **Claude
+Code** or **OpenCode** as it works — run the transparent proxy and point the
+tool's base URL at it. Your normal inference key is forwarded untouched (no admin
+key needed), and usage is recorded as each response streams back.
+
+```sh
+# Standalone:
+tt proxy
+
+# ...or fold it into the daemon so one process runs proxy + TUI:
+#   config.yaml → proxy.enabled: true
+token-tracker
+```
+
+Then point your harness at the proxy, using the provider name as the first path
+segment:
+
+```sh
+# Claude Code (Anthropic protocol — captures cache-read/cache-creation tokens):
+ANTHROPIC_BASE_URL=http://127.0.0.1:7879/anthropic claude
+
+# OpenAI-compatible tools (OpenCode w/ OpenAI, etc.):
+#   base URL → http://127.0.0.1:7879/openai/v1
+#   OpenRouter → http://127.0.0.1:7879/openrouter/api/v1
+```
+
+Notes:
+- Requires a harness that supports a custom base URL (Claude Code, OpenCode, Aider, Cline, …). Tools that hardcode their endpoint can't be proxied.
+- On an API key, cost is priced by the engine. On a subscription (OAuth) login, token/cache counts are still captured, but per-token dollar cost isn't billed (API-equivalent cost estimation is planned).
+
 ## Configuration
 
 Config lives at `~/.config/token-tracker/config.yaml`. See `configs/config.example.yaml` for the full schema.

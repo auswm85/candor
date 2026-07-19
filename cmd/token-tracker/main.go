@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -47,6 +48,21 @@ func main() {
 	// Start the poll loop if any providers are configured.
 	if scheduler := app.NewScheduler(cfg, st); scheduler != nil {
 		go scheduler.Start(ctx)
+	}
+
+	// Start the live-usage proxy alongside the TUI when enabled.
+	if cfg.Proxy.Enabled {
+		proxySrv := &http.Server{Addr: app.ProxyListen(cfg), Handler: app.BuildProxy(cfg, st)}
+		go func() {
+			log.Printf("proxy listening on http://%s", proxySrv.Addr)
+			if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("proxy: %v", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			_ = proxySrv.Close()
+		}()
 	}
 
 	alerter := alert.New(cfg, st)

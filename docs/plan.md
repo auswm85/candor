@@ -397,7 +397,7 @@ the existing cost engine, store, TUI, and alerts.
 - [x] OpenAI-compatible extraction (covers OpenAI + OpenRouter), streaming + non-streaming
 - [x] Additive per-minute storage (`store.AddUsage`)
 - [x] Anthropic protocol extraction (`/v1/messages`, cache_read/cache_creation; split-across-events streaming) — enables Claude Code + OpenCode-with-Claude
-- [ ] Run proxy inside the main daemon alongside the TUI
+- [x] Run proxy inside the main daemon alongside the TUI (`proxy.enabled: true`)
 - [ ] Per-request event log / drill-down
 - [ ] Cost handling for subscription (OAuth) harnesses — token counts with estimated API-equivalent cost
 

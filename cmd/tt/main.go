@@ -16,8 +16,6 @@ import (
 	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
-	"github.com/auswm85/token-tracker/internal/cost"
-	"github.com/auswm85/token-tracker/internal/proxy"
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -378,21 +376,9 @@ Your normal inference key is forwarded untouched — no admin key needed.`,
 			return fmt.Errorf("migrate: %w", err)
 		}
 
-		upstreams := cfg.Proxy.Upstreams
-		if len(upstreams) == 0 {
-			upstreams = map[string]string{
-				"openai":     "https://api.openai.com",
-				"openrouter": "https://openrouter.ai",
-				"anthropic":  "https://api.anthropic.com",
-			}
-		}
-		listen := cfg.Proxy.Listen
-		if listen == "" {
-			listen = "127.0.0.1:7879"
-		}
-
-		rec := proxy.NewRecorder(st, cost.New(cost.DefaultPrices()))
-		srv := &http.Server{Addr: listen, Handler: proxy.NewProxy(upstreams, rec)}
+		upstreams := app.ProxyUpstreams(cfg)
+		listen := app.ProxyListen(cfg)
+		srv := &http.Server{Addr: listen, Handler: app.BuildProxy(cfg, st)}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
