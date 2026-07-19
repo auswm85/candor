@@ -11,7 +11,8 @@ Local-first LLM cost tracker. A transparent local **proxy** captures live, per-r
 - **Multi-provider** — proxy handles OpenAI-compatible (OpenAI, OpenRouter) and Anthropic protocols; polling adapters cover all three. OpenRouter cost comes straight from the provider; others are priced by the engine.
 - **Local-first** — single Go binary, SQLite database. No cloud.
 - **Projected monthly spend + alerts** — extrapolates burn rate against your budget, fires an OS notification (macOS/Linux/Windows) once per threshold crossed each month.
-- **Terminal UI** — full-screen bubbletea dashboard with a persistent sidebar (at-a-glance spend, this-session burn rate, proxy status) and tabbed panels: **Live** (24h trend sparkline, live activity feed, top models, cache impact), 30-day **History** chart, and **Alerts**.
+- **Rate-limit window tracking** — the proxy reads providers' rate-limit response headers, so the dashboard shows your **Claude Code plan windows** (the 5-hour and weekly caps subscription users actually watch, from `anthropic-ratelimit-unified-*`) and OpenAI/OpenRouter per-minute request/token limits — utilization bars with reset countdowns, captured live from real traffic (no extra probe calls).
+- **Terminal UI** — full-screen bubbletea dashboard with a persistent sidebar (at-a-glance spend, this-session burn rate, proxy status) and tabbed panels: **Live** (24h trend sparkline, live activity feed, top models, cache impact, rate-limit windows), 30-day **History** chart, and **Alerts**.
 
 ## Quick Start
 

@@ -165,6 +165,39 @@ func TestProxy_StatsEndpointReflectsRecordedRequests(t *testing.T) {
 	}
 }
 
+func TestProxy_StatsExposesRateLimits(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "62.5")
+		w.Header().Set("anthropic-ratelimit-unified-5h-status", "allowed")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usage":{"input_tokens":10,"output_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	p, _ := newProxy(t, "anthropic", upstream.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/anthropic/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[]}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var s Stats
+	getJSON(t, front.URL+"/stats", &s)
+	if len(s.Limits) != 1 || s.Limits[0].Provider != "anthropic" {
+		t.Fatalf("limits = %+v", s.Limits)
+	}
+	w := s.Limits[0].Windows
+	if len(w) != 1 || w[0].Label != "5h" || w[0].Utilization != 62.5 {
+		t.Fatalf("windows = %+v", w)
+	}
+}
+
 func getJSON(t *testing.T, url string, v any) {
 	t.Helper()
 	resp, err := http.Get(url)

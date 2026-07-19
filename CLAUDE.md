@@ -54,7 +54,7 @@ Each poll provider is a custom adapter implementing the `Provider` interface. No
 
 ```
 internal/
-  proxy/          Transparent reverse proxy + per-provider usage extractors + recorder
+  proxy/          Transparent reverse proxy + usage extractors + rate-limit header capture + recorder; serves /healthz (liveness) and /stats (live feed/burn/limits for a detached TUI viewer)
   provider/       Provider interface + per-provider polling adapters
     openai/       OpenAI  GET /v1/organization/costs (Admin key)
     anthropic/    Anthropic usage_report/messages + /claude_code (Admin key)

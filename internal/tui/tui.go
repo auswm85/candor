@@ -116,6 +116,7 @@ type model struct {
 
 	// live session state (from the in-process proxy recorder)
 	feed      []proxy.Event
+	limits    []proxy.Limits
 	sessReq   int
 	sessCost  float64
 	sessStart time.Time
@@ -190,6 +191,7 @@ type spendMsg struct {
 
 	// live session snapshot (nil recorder → zero values)
 	feed      []proxy.Event
+	limits    []proxy.Limits
 	sessReq   int
 	sessCost  float64
 	sessStart time.Time
@@ -271,6 +273,7 @@ func (m model) loadSpend() tea.Msg {
 			feed = feed[:8]
 		}
 		msg.feed = feed
+		msg.limits = stats.Limits
 		msg.sessReq = stats.Requests
 		msg.sessCost = stats.SessionCost
 		msg.sessStart = stats.Started
@@ -486,6 +489,7 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cacheExtra = msg.cacheExtra
 			m.notified = msg.notified
 			m.feed = msg.feed
+			m.limits = msg.limits
 			m.sessReq = msg.sessReq
 			m.sessCost = msg.sessCost
 			m.sessStart = msg.sessStart
@@ -757,12 +761,55 @@ func (m model) renderLive(width int) string {
 			lipgloss.NewStyle().Foreground(netColor).Render(fmt.Sprintf("%+.2f", net)))
 	}
 
+	// --- Rate limits (provider plan / per-minute windows) ---
+	if len(m.limits) > 0 {
+		fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Rate limits"))
+		for _, lm := range m.limits {
+			for _, wnd := range lm.Windows {
+				label := fmt.Sprintf("%s %s", lm.Provider, wnd.Label)
+				line := fmt.Sprintf("  %-20s ", label)
+				switch {
+				case wnd.Utilization >= 0:
+					line += budgetBar(wnd.Utilization, 12)
+				case wnd.Remaining >= 0:
+					line += fmt.Sprintf("%d left", wnd.Remaining)
+				default:
+					line += dimStyle.Render("—")
+				}
+				if !wnd.Reset.IsZero() {
+					if d := time.Until(wnd.Reset); d > 0 {
+						line += dimStyle.Render("  · resets in " + shortDur(d))
+					}
+				}
+				fmt.Fprintf(&b, "%s\n", line)
+			}
+		}
+	}
+
 	// --- Empty state ---
 	if m.today == 0 && m.month == 0 && len(m.daily) == 0 && len(m.feed) == 0 {
 		fmt.Fprintf(&b, "\n%s\n", dimStyle.Render(
 			"No usage yet — point a harness at the proxy and spend appears here."))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// shortDur formats a duration compactly for reset countdowns: 2h13m, 6m, 45s.
+func shortDur(d time.Duration) string {
+	d = d.Round(time.Minute)
+	if d < time.Minute {
+		return "<1m"
+	}
+	h := d / time.Hour
+	m := (d % time.Hour) / time.Minute
+	switch {
+	case h > 0 && m > 0:
+		return fmt.Sprintf("%dh%dm", h, m)
+	case h > 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dm", m)
+	}
 }
 
 // sparkline renders the last-24h hourly cost trend as a compact block chart.

@@ -140,6 +140,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
+	// Capture rate-limit window state from the response headers (Anthropic plan
+	// windows, OpenAI per-minute limits). Best-effort, off the forwarding path.
+	if p.recorder != nil {
+		recovering("rate limits", func() {
+			p.recorder.SetLimits(parseRateLimits(provider, resp.Header, time.Now()))
+		})
+	}
+
 	// Usage tapping is best-effort and must never break the proxied response: a
 	// bug in an extractor should cost us a metric, not the user's request. Every
 	// tap point below is isolated so forwarding continues regardless.

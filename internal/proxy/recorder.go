@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -43,7 +44,8 @@ type Stats struct {
 	Requests    int       `json:"requests"`
 	SessionCost float64   `json:"session_cost"`
 	Started     time.Time `json:"started"`
-	Recent      []Event   `json:"recent"` // newest first
+	Recent      []Event   `json:"recent"`           // newest first
+	Limits      []Limits  `json:"limits,omitempty"` // latest per provider, by name
 }
 
 const ringSize = 256
@@ -62,12 +64,28 @@ type Recorder struct {
 	mu          sync.Mutex
 	ring        []Event // oldest-first, capped at ringSize
 	requests    int
-	sessionCost float64 // cumulative USD recorded this session
+	sessionCost float64           // cumulative USD recorded this session
+	limits      map[string]Limits // latest rate-limit state per provider
 	started     time.Time
 }
 
 func NewRecorder(st *store.Store, engine *cost.Engine) *Recorder {
 	return &Recorder{store: st, engine: engine, nowFn: time.Now, started: time.Now()}
+}
+
+// SetLimits records the latest rate-limit window state for a provider. A
+// snapshot with no windows is ignored so a response lacking the headers doesn't
+// wipe a previously-seen state.
+func (r *Recorder) SetLimits(l Limits) {
+	if len(l.Windows) == 0 {
+		return
+	}
+	r.mu.Lock()
+	if r.limits == nil {
+		r.limits = make(map[string]Limits)
+	}
+	r.limits[l.Provider] = l
+	r.mu.Unlock()
 }
 
 // Snapshot returns the current session stats plus up to n most-recent events
@@ -82,11 +100,23 @@ func (r *Recorder) Snapshot(n int) Stats {
 	for i := 0; i < n; i++ {
 		recent[i] = r.ring[len(r.ring)-1-i]
 	}
+	var limits []Limits
+	if len(r.limits) > 0 {
+		provs := make([]string, 0, len(r.limits))
+		for p := range r.limits {
+			provs = append(provs, p)
+		}
+		sort.Strings(provs)
+		for _, p := range provs {
+			limits = append(limits, r.limits[p])
+		}
+	}
 	return Stats{
 		Requests:    r.requests,
 		SessionCost: r.sessionCost,
 		Started:     r.started,
 		Recent:      recent,
+		Limits:      limits,
 	}
 }
 
