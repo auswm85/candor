@@ -21,24 +21,12 @@ CREATE TABLE usage_records (
     cache_write_tokens   INTEGER NOT NULL DEFAULT 0,
     output_tokens        INTEGER NOT NULL,
     cost_usd             REAL NOT NULL,
-    raw_payload          TEXT,
     fetched_at           TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(provider_id, model_id, bucket_start)
 );
 
 CREATE INDEX idx_usage_time ON usage_records(bucket_start);
 CREATE INDEX idx_usage_model ON usage_records(model_id, bucket_start);
-
-CREATE TABLE alerts (
-    id              INTEGER PRIMARY KEY,
-    name            TEXT NOT NULL,
-    threshold_usd   REAL NOT NULL,
-    window          TEXT NOT NULL,
-    channel         TEXT NOT NULL DEFAULT 'terminal',
-    enabled         INTEGER NOT NULL DEFAULT 1,
-    last_triggered_at TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
 
 CREATE TABLE config_state (
     key   TEXT PRIMARY KEY,

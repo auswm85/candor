@@ -30,8 +30,7 @@ type UsageRow struct {
 	CacheWriteTokens  int64
 	OutputTokens      int64
 	CostUSD           float64
-	RawPayload        string
-	FetchedAt         time.Time
+	FetchedAt         time.Time // when the row was last written
 }
 
 func Open(path string) (*Store, error) {
@@ -151,33 +150,16 @@ func (s *Store) ModelID(providerID int64, name string) (int64, error) {
 	return id, nil
 }
 
-func (s *Store) InsertUsage(r UsageRow) error {
-	_, err := s.db.Exec(`
-		INSERT INTO usage_records
-			(provider_id, model_id, bucket_start, bucket_end,
-			 input_tokens, cached_input_tokens, cache_write_tokens,
-			 output_tokens, cost_usd, raw_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(provider_id, model_id, bucket_start) DO UPDATE SET
-			cost_usd = excluded.cost_usd,
-			fetched_at = datetime('now')
-	`, r.ProviderID, r.ModelID, r.BucketStart.Format(time.RFC3339),
-		r.BucketEnd.Format(time.RFC3339), r.InputTokens, r.CachedInputTokens,
-		r.CacheWriteTokens, r.OutputTokens, r.CostUSD, r.RawPayload)
-	return err
-}
-
 // AddUsage additively records usage into a bucket, summing tokens and cost onto
 // any existing row for the same (provider, model, bucket_start). This is the
-// write path for proxy mode, where each request contributes incrementally —
-// unlike InsertUsage, which overwrites (authoritative poll snapshots).
+// proxy write path, where each request contributes incrementally.
 func (s *Store) AddUsage(r UsageRow) error {
 	_, err := s.db.Exec(`
 		INSERT INTO usage_records
 			(provider_id, model_id, bucket_start, bucket_end,
 			 input_tokens, cached_input_tokens, cache_write_tokens,
-			 output_tokens, cost_usd, raw_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 output_tokens, cost_usd)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(provider_id, model_id, bucket_start) DO UPDATE SET
 			input_tokens        = input_tokens + excluded.input_tokens,
 			cached_input_tokens = cached_input_tokens + excluded.cached_input_tokens,
@@ -187,7 +169,7 @@ func (s *Store) AddUsage(r UsageRow) error {
 			fetched_at          = datetime('now')
 	`, r.ProviderID, r.ModelID, r.BucketStart.Format(time.RFC3339),
 		r.BucketEnd.Format(time.RFC3339), r.InputTokens, r.CachedInputTokens,
-		r.CacheWriteTokens, r.OutputTokens, r.CostUSD, r.RawPayload)
+		r.CacheWriteTokens, r.OutputTokens, r.CostUSD)
 	return err
 }
 
@@ -195,7 +177,7 @@ func (s *Store) UsageSince(since time.Time) ([]UsageRow, error) {
 	rows, err := s.db.Query(`
 		SELECT id, provider_id, model_id, bucket_start, bucket_end,
 		       input_tokens, cached_input_tokens, cache_write_tokens,
-		       output_tokens, cost_usd, raw_payload, fetched_at
+		       output_tokens, cost_usd, fetched_at
 		FROM usage_records
 		WHERE bucket_start >= ?
 		ORDER BY bucket_start DESC
@@ -211,7 +193,7 @@ func (s *Store) UsageSince(since time.Time) ([]UsageRow, error) {
 		var start, end, fetched string
 		if err := rows.Scan(&r.ID, &r.ProviderID, &r.ModelID, &start, &end,
 			&r.InputTokens, &r.CachedInputTokens, &r.CacheWriteTokens,
-			&r.OutputTokens, &r.CostUSD, &r.RawPayload, &fetched); err != nil {
+			&r.OutputTokens, &r.CostUSD, &fetched); err != nil {
 			return nil, err
 		}
 		r.BucketStart, _ = time.Parse(time.RFC3339, start)

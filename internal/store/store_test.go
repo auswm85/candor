@@ -31,7 +31,7 @@ func TestStore_InsertAndQuery(t *testing.T) {
 		CostUSD:           0.025,
 	}
 
-	if err := s.InsertUsage(r); err != nil {
+	if err := s.AddUsage(r); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +103,7 @@ func TestStore_UpsertAndByModel(t *testing.T) {
 
 	base := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
 	must := func(r UsageRow) {
-		if err := s.InsertUsage(r); err != nil {
+		if err := s.AddUsage(r); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -149,7 +149,7 @@ func TestStore_DailyCostSince(t *testing.T) {
 		{ProviderID: pid, ModelID: mid, BucketStart: day2b, BucketEnd: day2b.Add(time.Hour), CostUSD: 0.50},
 	}
 	for _, r := range rows {
-		if err := s.InsertUsage(r); err != nil {
+		if err := s.AddUsage(r); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,9 +184,9 @@ func TestStore_ModelUsageSince(t *testing.T) {
 	haiku, _ := s.ModelID(pid, "claude-haiku-4-5")
 	base := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
 
-	_ = s.InsertUsage(UsageRow{ProviderID: pid, ModelID: sonnet, BucketStart: base, BucketEnd: base.Add(time.Hour),
+	_ = s.AddUsage(UsageRow{ProviderID: pid, ModelID: sonnet, BucketStart: base, BucketEnd: base.Add(time.Hour),
 		InputTokens: 1000, CachedInputTokens: 500, CacheWriteTokens: 100, OutputTokens: 200, CostUSD: 2.00})
-	_ = s.InsertUsage(UsageRow{ProviderID: pid, ModelID: haiku, BucketStart: base, BucketEnd: base.Add(time.Hour),
+	_ = s.AddUsage(UsageRow{ProviderID: pid, ModelID: haiku, BucketStart: base, BucketEnd: base.Add(time.Hour),
 		InputTokens: 300, OutputTokens: 50, CostUSD: 0.50})
 
 	rows, err := s.ModelUsageSince(base.Add(-time.Hour))
