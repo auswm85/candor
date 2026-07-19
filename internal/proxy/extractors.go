@@ -26,12 +26,17 @@ type StreamAccumulator interface {
 }
 
 // extractorFor picks the protocol by provider name. Anthropic uses the Messages
-// API; everything else is treated as OpenAI-compatible.
+// API; OpenRouter is OpenAI-compatible but also needs usage accounting turned on
+// to return cost; everything else is plain OpenAI-compatible.
 func extractorFor(provider string) Extractor {
-	if provider == "anthropic" {
+	switch provider {
+	case "anthropic":
 		return anthropicExtractor{}
+	case "openrouter":
+		return openRouterExtractor{}
+	default:
+		return openAIExtractor{}
 	}
-	return openAIExtractor{}
 }
 
 func sseData(line []byte) ([]byte, bool) {
@@ -129,6 +134,43 @@ func (s *openAIStream) Line(line []byte) {
 }
 
 func (s *openAIStream) Usage() *Usage { return s.usage }
+
+// --- OpenRouter (OpenAI-compatible + usage accounting) ---
+
+// openRouterExtractor parses responses exactly like OpenAI, but asks OpenRouter
+// to include its `cost` in the response (usage accounting is off by default), so
+// we record the real provider cost rather than pricing tokens ourselves.
+type openRouterExtractor struct{ openAIExtractor }
+
+func (openRouterExtractor) PrepareRequestBody(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	// {"usage": {"include": true}} → OpenRouter returns usage.cost.
+	usage, _ := m["usage"].(map[string]any)
+	if usage == nil {
+		usage = map[string]any{}
+	}
+	usage["include"] = true
+	m["usage"] = usage
+	// Streaming responses also need a final usage chunk.
+	if streaming, _ := m["stream"].(bool); streaming {
+		opts, _ := m["stream_options"].(map[string]any)
+		if opts == nil {
+			opts = map[string]any{}
+		}
+		opts["include_usage"] = true
+		m["stream_options"] = opts
+	}
+	if nb, err := json.Marshal(m); err == nil {
+		return nb
+	}
+	return body
+}
 
 // --- Anthropic Messages API (Claude Code, OpenCode-with-Claude) ---
 

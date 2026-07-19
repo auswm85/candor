@@ -195,3 +195,41 @@ func TestProxy_AnthropicStreamingCombinesEvents(t *testing.T) {
 		t.Errorf("combined tokens wrong: in=%d cached=%d write=%d out=%d", r.InputTokens, r.CachedInputTokens, r.CacheWriteTokens, r.OutputTokens)
 	}
 }
+
+func TestProxy_OpenRouterUsesProviderCostAndInjectsAccounting(t *testing.T) {
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		// OpenRouter includes a `cost` in usage when accounting is on.
+		_, _ = w.Write([]byte(`{"model":"anthropic/claude-sonnet-4.5","usage":{"prompt_tokens":1000,"completion_tokens":200,"cost":0.0123}}`))
+	}))
+	defer upstream.Close()
+
+	p, st := newProxy(t, "openrouter", upstream.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	req, _ := http.NewRequest("POST", front.URL+"/openrouter/api/v1/chat/completions",
+		strings.NewReader(`{"model":"anthropic/claude-sonnet-4.5","messages":[]}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Proxy must have injected usage accounting.
+	if !strings.Contains(string(gotBody), `"include":true`) {
+		t.Errorf("proxy did not inject usage accounting: %s", gotBody)
+	}
+
+	// Stored cost must be OpenRouter's provider cost, not an engine estimate
+	// (there's no openrouter pricing in the test engine).
+	total, err := st.TotalCostSince(time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := total - 0.0123; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("stored cost = %v, want 0.0123 (provider-supplied)", total)
+	}
+}
