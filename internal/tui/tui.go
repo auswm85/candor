@@ -303,9 +303,9 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tab = tabHistory
 		case "3":
 			m.tab = tabAlerts
-		case "tab", "right", "l":
+		case "tab", "down", "j":
 			m.tab = (m.tab + 1) % 3
-		case "shift+tab", "left", "h":
+		case "shift+tab", "up", "k":
 			m.tab = (m.tab + 2) % 3
 		}
 	case spendMsg:
@@ -385,7 +385,7 @@ func (m model) viewDashboard() string {
 		header += "  " + dimStyle.Render(hint)
 	}
 
-	footer := dimStyle.Render("Tab ←/→ switch · 1·2·3 jump · r refresh · q quit")
+	footer := dimStyle.Render("Tab ↑/↓ switch · 1·2·3 jump · r refresh · q quit")
 
 	return header + "\n" + body + "\n" + footer + "\n"
 }
