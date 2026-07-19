@@ -288,6 +288,47 @@ func (s *Store) SetConfigState(key, value string) error {
 	return err
 }
 
+// ModelUsage is a per-model token + cost aggregate, ordered by spend descending.
+type ModelUsage struct {
+	Provider   string
+	Model      string
+	Input      int64
+	Cached     int64
+	CacheWrite int64
+	Output     int64
+	CostUSD    float64
+}
+
+// ModelUsageSince returns per-model token sums and cost since the given time,
+// most expensive first — backing the TUI's top-models and cache-impact views.
+func (s *Store) ModelUsageSince(since time.Time) ([]ModelUsage, error) {
+	rows, err := s.db.Query(`
+		SELECT p.name, m.name,
+		       SUM(u.input_tokens), SUM(u.cached_input_tokens),
+		       SUM(u.cache_write_tokens), SUM(u.output_tokens), SUM(u.cost_usd)
+		FROM usage_records u
+		JOIN providers p ON p.id = u.provider_id
+		JOIN models    m ON m.id = u.model_id
+		WHERE u.bucket_start >= ?
+		GROUP BY p.name, m.name
+		ORDER BY SUM(u.cost_usd) DESC
+	`, since.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ModelUsage
+	for rows.Next() {
+		var mu ModelUsage
+		if err := rows.Scan(&mu.Provider, &mu.Model, &mu.Input, &mu.Cached, &mu.CacheWrite, &mu.Output, &mu.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, mu)
+	}
+	return out, rows.Err()
+}
+
 // ModelCost is a per-model cost aggregate, ordered by spend descending.
 type ModelCost struct {
 	Provider string

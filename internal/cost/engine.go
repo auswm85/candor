@@ -38,16 +38,40 @@ func New(prices Prices) *Engine {
 	return &Engine{prices: prices}
 }
 
-func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cacheWrite, outputTokens int64) float64 {
+// priceFor looks up a model's price, falling back to the canonical (normalized)
+// ID so dated/prefixed proxied model names still resolve.
+func (e *Engine) priceFor(provider, model string) (ModelPrice, bool) {
 	modelPrices, ok := e.prices[provider]
 	if !ok {
-		return 0
+		return ModelPrice{}, false
 	}
 	p, ok := modelPrices[model]
 	if !ok {
-		// Fall back to the canonical ID so proxied harness traffic still costs.
 		p, ok = modelPrices[NormalizeModel(model)]
 	}
+	return p, ok
+}
+
+// CacheImpact returns the dollars saved by reading cached tokens (vs paying full
+// input price) and the extra dollars paid to create the cache (vs normal input).
+func (e *Engine) CacheImpact(provider, model string, cachedTokens, cacheWriteTokens int64) (saved, extra float64) {
+	p, ok := e.priceFor(provider, model)
+	if !ok {
+		return 0, 0
+	}
+	saved = float64(cachedTokens) / 1_000_000 * (p.InputPer1M - p.CachedInputPer1M)
+	extra = float64(cacheWriteTokens) / 1_000_000 * (p.CacheWritePer1M - p.InputPer1M)
+	if saved < 0 {
+		saved = 0
+	}
+	if extra < 0 {
+		extra = 0
+	}
+	return saved, extra
+}
+
+func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cacheWrite, outputTokens int64) float64 {
+	p, ok := e.priceFor(provider, model)
 	if !ok {
 		return 0
 	}

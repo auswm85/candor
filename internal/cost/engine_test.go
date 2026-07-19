@@ -135,6 +135,20 @@ func TestEngine_DatedModelResolvesToPricing(t *testing.T) {
 	}
 }
 
+func TestEngine_CacheImpact(t *testing.T) {
+	e := New(DefaultPrices())
+	// claude-sonnet-4-5: input 3.00, cacheRead 0.30, cacheWrite 3.75.
+	// saved = 1M/1M * (3.00 - 0.30) = 2.70 ; extra = 1M/1M * (3.75 - 3.00) = 0.75
+	saved, extra := e.CacheImpact("anthropic", "claude-sonnet-4-5-20250929", 1_000_000, 1_000_000)
+	if abs(saved-2.70) > 0.0001 || abs(extra-0.75) > 0.0001 {
+		t.Errorf("saved=%v extra=%v, want 2.70 / 0.75", saved, extra)
+	}
+	// Unknown model → zero, no panic.
+	if s, x := e.CacheImpact("openai", "nope", 1000, 1000); s != 0 || x != 0 {
+		t.Errorf("unknown model impact = %v/%v, want 0/0", s, x)
+	}
+}
+
 func abs(f float64) float64 {
 	if f < 0 {
 		return -f

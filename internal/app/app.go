@@ -73,6 +73,12 @@ func priceTable(cfg *config.Config) cost.Prices {
 	return pricing.Load(filepath.Dir(cfg.Database), cfg.Pricing.Source)
 }
 
+// BuildEngine returns a cost engine using the dynamic price table — for the TUI
+// to compute cache-impact figures.
+func BuildEngine(cfg *config.Config) *cost.Engine {
+	return cost.New(priceTable(cfg))
+}
+
 // BuildProxy constructs the live-usage proxy handler backed by the store.
 func BuildProxy(cfg *config.Config, st *store.Store) *proxy.Proxy {
 	rec := proxy.NewRecorder(st, cost.New(priceTable(cfg)))

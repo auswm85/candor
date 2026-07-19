@@ -12,6 +12,7 @@ import (
 	"github.com/auswm85/token-tracker/internal/app"
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/cost"
 	"github.com/auswm85/token-tracker/internal/store"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -56,17 +57,21 @@ type model struct {
 	cfg     *config.Config
 	alerter *alert.Checker
 	store   *store.Store
+	engine  *cost.Engine
 	state   state
 	step    step
 
 	// dashboard state
-	tab       tab
-	today     float64
-	month     float64
-	projected float64
-	daily     []store.DayCost
-	notified  int // highest budget threshold already alerted this month
-	spendErr  string
+	tab        tab
+	today      float64
+	month      float64
+	projected  float64
+	daily      []store.DayCost
+	topModels  []store.ModelUsage
+	cacheSaved float64
+	cacheExtra float64
+	notified   int // highest budget threshold already alerted this month
+	spendErr   string
 
 	// onboarding state
 	pickIndex  int
@@ -95,18 +100,27 @@ func (m model) WithStore(st *store.Store) model {
 	return m
 }
 
+// WithEngine attaches a cost engine so the dashboard can compute cache impact.
+func (m model) WithEngine(e *cost.Engine) model {
+	m.engine = e
+	return m
+}
+
 func NewProgram(m model, alerter *alert.Checker) *tea.Program {
 	m.alerter = alerter
 	return tea.NewProgram(m)
 }
 
 type spendMsg struct {
-	today     float64
-	month     float64
-	projected float64
-	daily     []store.DayCost
-	notified  int
-	err       error
+	today      float64
+	month      float64
+	projected  float64
+	daily      []store.DayCost
+	topModels  []store.ModelUsage
+	cacheSaved float64
+	cacheExtra float64
+	notified   int
+	err        error
 }
 
 type tickMsg struct{}
@@ -146,7 +160,24 @@ func (m model) loadSpend() tea.Msg {
 		notified, _ = strconv.Atoi(v)
 	}
 
-	return spendMsg{today: today, month: month, projected: projected, daily: daily, notified: notified}
+	// Per-model breakdown (this month) → top models + aggregate cache impact.
+	usage, err := m.store.ModelUsageSince(startOfMonth)
+	if err != nil {
+		return spendMsg{err: err}
+	}
+	var saved, extra float64
+	if m.engine != nil {
+		for _, u := range usage {
+			s, x := m.engine.CacheImpact(u.Provider, u.Model, u.Cached, u.CacheWrite)
+			saved += s
+			extra += x
+		}
+	}
+
+	return spendMsg{
+		today: today, month: month, projected: projected, daily: daily,
+		topModels: usage, cacheSaved: saved, cacheExtra: extra, notified: notified,
+	}
 }
 
 func tick() tea.Cmd {
@@ -323,6 +354,9 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.month = msg.month
 			m.projected = msg.projected
 			m.daily = msg.daily
+			m.topModels = msg.topModels
+			m.cacheSaved = msg.cacheSaved
+			m.cacheExtra = msg.cacheExtra
 			m.notified = msg.notified
 		}
 	case tickMsg:
@@ -427,6 +461,7 @@ func (m model) viewDashboard() string {
 	// reads as navigation rather than a heading.
 	b.WriteString(titleStyle.Render("token-tracker"))
 	b.WriteString("   ")
+	b.WriteString("\n")
 	b.WriteString(m.tabBar())
 	b.WriteString("  ")
 	b.WriteString(dimStyle.Render("←/→ or Tab · 1·2·3"))
@@ -472,7 +507,7 @@ func (m model) renderLive() string {
 	var b strings.Builder
 
 	// --- Spend ---
-	b.WriteString(sectionHeader.Render("Spend") + "\n")
+	fmt.Fprintf(&b, "%s\n", sectionHeader.Render("Spend"))
 	fmt.Fprintf(&b, "  Today      $%.2f\n", m.today)
 	budget := m.cfg.Defaults.MonthlyBudgetUSD
 	if budget > 0 {
@@ -487,9 +522,42 @@ func (m model) renderLive() string {
 	}
 	fmt.Fprintf(&b, "  Projected  $%.2f  (at current rate)\n", m.projected)
 
+	// --- Top models (this month) ---
+	if len(m.topModels) > 0 {
+		fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Top models (this month)"))
+		max := m.topModels[0].CostUSD // rows are cost-desc
+		for i, u := range m.topModels {
+			if i >= 5 {
+				break
+			}
+			name := u.Provider + "/" + u.Model
+			if len(name) > 30 {
+				name = name[:29] + "…"
+			}
+			bars := 0
+			if max > 0 {
+				bars = int(u.CostUSD / max * 12)
+			}
+			perM := 0.0
+			if tot := u.Input + u.Cached + u.CacheWrite + u.Output; tot > 0 {
+				perM = u.CostUSD / float64(tot) * 1_000_000
+			}
+			fmt.Fprintf(&b, "  %-30s $%7.2f  %-12s $%.2f/M\n",
+				name, u.CostUSD, strings.Repeat("▓", bars), perM)
+		}
+	}
+
+	// --- Cache impact (this month) ---
+	if m.engine != nil && (m.cacheSaved > 0 || m.cacheExtra > 0) {
+		fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Cache impact (this month)"))
+		fmt.Fprintf(&b, "  Saved via cache reads:   $%.2f\n", m.cacheSaved)
+		fmt.Fprintf(&b, "  Extra via cache writes:  $%.2f\n", m.cacheExtra)
+		fmt.Fprintf(&b, "  Net cache effect:        %+.2f\n", m.cacheExtra-m.cacheSaved)
+	}
+
 	// --- Proxy ---
 	listen := app.ProxyListen(m.cfg)
-	b.WriteString("\n" + sectionHeader.Render("Proxy") + "\n")
+	fmt.Fprintf(&b, "\n%s\n", sectionHeader.Render("Proxy"))
 	if m.cfg.Proxy.Enabled {
 		fmt.Fprintf(&b, "  ✓ listening on %s\n", listen)
 	} else {
@@ -522,7 +590,7 @@ func (m model) renderHistory() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(sectionHeader.Render("Daily cost — last 30 days") + "\n\n")
+	fmt.Fprintf(&b, "%s\n\n", sectionHeader.Render("Daily cost — last 30 days"))
 	const width = 30
 	for _, d := range m.daily {
 		bars := 0

@@ -7,6 +7,7 @@ import (
 
 	"github.com/auswm85/token-tracker/internal/auth"
 	"github.com/auswm85/token-tracker/internal/config"
+	"github.com/auswm85/token-tracker/internal/cost"
 	"github.com/auswm85/token-tracker/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -53,6 +54,16 @@ func TestDashboardTabs(t *testing.T) {
 	// Live tab (default) shows spend and proxy sections.
 	if v := m.View(); !strings.Contains(v, "Month") || !strings.Contains(v, "Projected") || !strings.Contains(v, "Proxy") {
 		t.Errorf("live tab missing spend/proxy, got: %s", v)
+	}
+
+	// With per-model data + engine, Top models and Cache impact appear.
+	m.engine = cost.New(cost.DefaultPrices())
+	m.topModels = []store.ModelUsage{
+		{Provider: "anthropic", Model: "claude-sonnet-4-5", Input: 1000, Cached: 500, CacheWrite: 100, Output: 200, CostUSD: 2.0},
+	}
+	m.cacheSaved, m.cacheExtra = 1.5, 0.5
+	if v := m.View(); !strings.Contains(v, "Top models") || !strings.Contains(v, "claude-sonnet-4-5") || !strings.Contains(v, "Cache impact") {
+		t.Errorf("live tab missing top-models/cache sections, got: %s", v)
 	}
 
 	// Switch to History.

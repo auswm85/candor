@@ -96,7 +96,7 @@ func main() {
 
 	alerter := alert.New(cfg, st)
 
-	m := tui.NewModel(cfg).WithStore(st)
+	m := tui.NewModel(cfg).WithStore(st).WithEngine(app.BuildEngine(cfg))
 	p := tui.NewProgram(m, alerter)
 
 	go func() {

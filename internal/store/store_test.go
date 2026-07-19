@@ -170,6 +170,41 @@ func TestStore_DailyCostSince(t *testing.T) {
 	}
 }
 
+func TestStore_ModelUsageSince(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := s.ProviderID("anthropic")
+	sonnet, _ := s.ModelID(pid, "claude-sonnet-4-5")
+	haiku, _ := s.ModelID(pid, "claude-haiku-4-5")
+	base := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
+
+	_ = s.InsertUsage(UsageRow{ProviderID: pid, ModelID: sonnet, BucketStart: base, BucketEnd: base.Add(time.Hour),
+		InputTokens: 1000, CachedInputTokens: 500, CacheWriteTokens: 100, OutputTokens: 200, CostUSD: 2.00})
+	_ = s.InsertUsage(UsageRow{ProviderID: pid, ModelID: haiku, BucketStart: base, BucketEnd: base.Add(time.Hour),
+		InputTokens: 300, OutputTokens: 50, CostUSD: 0.50})
+
+	rows, err := s.ModelUsageSince(base.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	// Ordered by cost desc; token sums present.
+	if rows[0].Model != "claude-sonnet-4-5" || rows[0].Input != 1000 || rows[0].Cached != 500 || rows[0].CacheWrite != 100 {
+		t.Errorf("top row = %+v", rows[0])
+	}
+	if rows[1].Model != "claude-haiku-4-5" {
+		t.Errorf("second row = %+v", rows[1])
+	}
+}
+
 func abs(f float64) float64 {
 	if f < 0 {
 		return -f
