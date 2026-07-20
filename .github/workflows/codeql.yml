@@ -1,0 +1,55 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitignore"
+      - ".vscode/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "configs/config.example.yaml"
+      - ".goreleaser.yaml"
+      - ".github/workflows/release.yml"
+      - "Makefile"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitignore"
+      - ".vscode/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "configs/config.example.yaml"
+      - ".goreleaser.yaml"
+      - ".github/workflows/release.yml"
+      - "Makefile"
+  schedule:
+    - cron: "27 4 * * 1" # weekly, Monday 04:27 UTC
+
+jobs:
+  analyze:
+    name: Analyze Go
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          queries: security-and-quality
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:go"
