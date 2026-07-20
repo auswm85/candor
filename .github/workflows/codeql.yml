@@ -3,28 +3,8 @@ name: CodeQL
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - ".gitignore"
-      - ".vscode/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "configs/config.example.yaml"
-      - ".goreleaser.yaml"
-      - ".github/workflows/release.yml"
-      - "Makefile"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - ".gitignore"
-      - ".vscode/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "configs/config.example.yaml"
-      - ".goreleaser.yaml"
-      - ".github/workflows/release.yml"
-      - "Makefile"
   schedule:
     - cron: "27 4 * * 1" # weekly, Monday 04:27 UTC
 

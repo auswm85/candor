@@ -3,31 +3,30 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - ".gitignore"
-      - ".vscode/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "configs/config.example.yaml"
-      - ".goreleaser.yaml"
-      - ".github/workflows/release.yml"
-      - "Makefile"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - ".gitignore"
-      - ".vscode/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "configs/config.example.yaml"
-      - ".goreleaser.yaml"
-      - ".github/workflows/release.yml"
-      - "Makefile"
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'db/migrations/**'
+              - '.golangci.yml'
+              - '.github/workflows/ci.yml'
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -51,20 +50,26 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   test:
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      # Steps are gated individually (not the whole job) so the matrix check
+      # contexts always publish; on docs-only PRs they publish as Success.
+      - if: needs.changes.outputs.code == 'true'
+        uses: actions/checkout@v7
+      - if: needs.changes.outputs.code == 'true'
+        uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           cache: true
-      - run: go build ./cmd/candor
+      - if: needs.changes.outputs.code == 'true'
+        run: go build ./cmd/candor
       # Race detector on Linux/macOS; plain run on Windows (no reliable C toolchain).
-      - if: runner.os != 'Windows'
+      - if: needs.changes.outputs.code == 'true' && runner.os != 'Windows'
         run: go test -race -count=1 ./...
-      - if: runner.os == 'Windows'
+      - if: needs.changes.outputs.code == 'true' && runner.os == 'Windows'
         run: go test -count=1 ./...
