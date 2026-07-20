@@ -41,6 +41,36 @@ func TestValidateProxyListen(t *testing.T) {
 	}
 }
 
+func TestValidateUpstreams(t *testing.T) {
+	cases := []struct {
+		name      string
+		upstreams map[string]string
+		wantErr   bool
+	}{
+		{"https ok", map[string]string{"anthropic": "https://api.anthropic.com"}, false},
+		{"https with port ok", map[string]string{"x": "https://api.example.com:8443"}, false},
+		{"http loopback ok (ollama)", map[string]string{"ollama": "http://localhost:11434"}, false},
+		{"http 127.0.0.1 ok", map[string]string{"x": "http://127.0.0.1:1234"}, false},
+		{"http ipv6 loopback ok", map[string]string{"x": "http://[::1]:1234"}, false},
+		{"http non-loopback rejected", map[string]string{"x": "http://api.example.com"}, true},
+		{"http lan ip rejected", map[string]string{"x": "http://192.168.1.5:1234"}, true},
+		{"missing scheme rejected", map[string]string{"x": "api.example.com"}, true},
+		{"unsupported scheme rejected", map[string]string{"x": "ftp://api.example.com"}, true},
+		{"empty rejected", map[string]string{"x": ""}, true},
+		{"one bad among good rejected", map[string]string{
+			"anthropic": "https://api.anthropic.com",
+			"evil":      "http://api.example.com",
+		}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := ValidateUpstreams(c.upstreams); (err != nil) != c.wantErr {
+				t.Errorf("ValidateUpstreams(%v) err=%v, wantErr=%v", c.upstreams, err, c.wantErr)
+			}
+		})
+	}
+}
+
 func TestProxyChildEnv(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Proxy.Upstreams = map[string]string{

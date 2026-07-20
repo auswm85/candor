@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"time"
@@ -62,6 +63,47 @@ func ValidateProxyListen(addr string, allowNonLoopback bool) error {
 		return errors.New("proxy.listen is not a loopback address; set proxy.allow_nonloopback: true to override")
 	}
 	return nil
+}
+
+// ValidateUpstreams rejects malformed or plaintext upstream URLs at startup.
+// The proxy forwards the user's API key to each upstream, so an http (non-TLS)
+// upstream would leak that key on the wire — permitted only for loopback hosts
+// (local OpenAI-compatible servers like ollama). This is fail-fast config
+// hygiene, not a trust boundary: the upstream map is the user's own config, so
+// the goal is catching a typo or an accidental plaintext endpoint, not
+// defending against an attacker who already controls the config file.
+func ValidateUpstreams(upstreams map[string]string) error {
+	for name, raw := range upstreams {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("proxy.upstreams[%s]: invalid URL %q: %w", name, raw, err)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("proxy.upstreams[%s]: %q has no host (want e.g. https://api.example.com)", name, raw)
+		}
+		switch u.Scheme {
+		case "https":
+			// ok
+		case "http":
+			if !isLoopbackHost(u.Hostname()) {
+				return fmt.Errorf("proxy.upstreams[%s]: %q uses plaintext http to a non-loopback host, which would leak your API key; use https (http is allowed only for localhost)", name, raw)
+			}
+		default:
+			return fmt.Errorf("proxy.upstreams[%s]: %q has unsupported scheme %q (want https)", name, raw, u.Scheme)
+		}
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host (no port) is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // priceTable loads model pricing dynamically (cached next to the DB), falling

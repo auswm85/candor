@@ -12,6 +12,8 @@ proxy:
   listen: 127.0.0.1:7879
   allow_nonloopback: false # refuse to bind a non-loopback address unless true (proxy forwards your keys)
   max_body_bytes: 16777216 # 16 MiB cap on proxied request bodies; oversized requests get 413
+  # Upstreams must be https (your API key is forwarded to them); plaintext http
+  # is allowed only for loopback hosts (localhost/127.0.0.1) like a local ollama.
   upstreams:
     openai: https://api.openai.com
     openrouter: https://openrouter.ai

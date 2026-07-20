@@ -133,6 +133,9 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		if err := app.ValidateProxyListen(listen, cfg.Proxy.AllowNonLoopback); err != nil {
 			return fmt.Errorf("proxy: %w", err)
 		}
+		if err := app.ValidateUpstreams(app.ProxyUpstreams(cfg)); err != nil {
+			return fmt.Errorf("proxy: %w", err)
+		}
 		// Bind synchronously so a port-in-use error is surfaced to the user
 		// instead of the dashboard silently coming up without a proxy.
 		ln, err := net.Listen("tcp", listen)
@@ -198,6 +201,9 @@ Also fires budget-threshold notifications while it runs.`,
 
 		listen := app.ProxyListen(cfg)
 		if err := app.ValidateProxyListen(listen, cfg.Proxy.AllowNonLoopback); err != nil {
+			return fmt.Errorf("proxy: %w", err)
+		}
+		if err := app.ValidateUpstreams(app.ProxyUpstreams(cfg)); err != nil {
 			return fmt.Errorf("proxy: %w", err)
 		}
 		srv := newProxyServer(listen, app.BuildProxy(cfg, app.BuildRecorder(st, app.BuildEngine(cfg))))
