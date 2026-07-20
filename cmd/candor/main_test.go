@@ -792,7 +792,10 @@ func TestOpenStore_BadDatabasePath(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("not a dir"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, home, `database: "`+blocker+`/tokens.db"`+"\n")
+	// ToSlash so a Windows path (C:\...) doesn't turn into YAML escape sequences
+	// (\U, \A, …) inside the double-quoted string. Forward slashes are valid on
+	// Windows too, and `blocker` is still a file where a dir must be created.
+	writeConfig(t, home, `database: "`+filepath.ToSlash(blocker)+`/tokens.db"`+"\n")
 	t.Setenv("HOME", home)
 	_, _, err := openStore()
 	if err == nil || !strings.Contains(err.Error(), "open store:") {
