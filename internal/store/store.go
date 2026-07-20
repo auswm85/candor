@@ -185,7 +185,7 @@ func (s *Store) UsageSince(since time.Time) ([]UsageRow, error) {
 		FROM usage_records
 		WHERE bucket_start >= ?
 		ORDER BY bucket_start DESC
-	`, since.Format(time.RFC3339))
+	`, since.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func (s *Store) TotalCostSince(since time.Time) (float64, error) {
 	var total sql.NullFloat64
 	err := s.db.QueryRow(`
 		SELECT SUM(cost_usd) FROM usage_records WHERE bucket_start >= ?
-	`, since.Format(time.RFC3339)).Scan(&total)
+	`, since.UTC().Format(time.RFC3339)).Scan(&total)
 	if err != nil {
 		return 0, err
 	}
@@ -226,29 +226,31 @@ func (s *Store) TotalTokensSince(since time.Time) (int64, error) {
 	err := s.db.QueryRow(`
 		SELECT SUM(input_tokens + cached_input_tokens + cache_write_tokens + output_tokens)
 		FROM usage_records WHERE bucket_start >= ?
-	`, since.Format(time.RFC3339)).Scan(&total)
+	`, since.UTC().Format(time.RFC3339)).Scan(&total)
 	if err != nil {
 		return 0, err
 	}
 	return total.Int64, nil
 }
 
-// DayCost is a single day's total cost. Day is "YYYY-MM-DD" (UTC bucket date).
+// DayCost is a single day's total cost. Day is "YYYY-MM-DD" in the machine's
+// local time zone (buckets are stored in UTC and converted for grouping).
 type DayCost struct {
 	Day     string
 	CostUSD float64
 }
 
-// DailyCostSince returns total cost grouped by calendar day since the given
-// time, oldest day first.
+// DailyCostSince returns total cost grouped by local calendar day since the
+// given time, oldest day first. Buckets are stored in UTC and converted to
+// local time (DST-aware, per timestamp) so a day reflects the user's clock.
 func (s *Store) DailyCostSince(since time.Time) ([]DayCost, error) {
 	rows, err := s.db.Query(`
-		SELECT substr(bucket_start, 1, 10) AS day, SUM(cost_usd) AS cost
+		SELECT strftime('%Y-%m-%d', bucket_start, 'localtime') AS day, SUM(cost_usd) AS cost
 		FROM usage_records
 		WHERE bucket_start >= ?
 		GROUP BY day
 		ORDER BY day ASC
-	`, since.Format(time.RFC3339))
+	`, since.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -265,23 +267,24 @@ func (s *Store) DailyCostSince(since time.Time) ([]DayCost, error) {
 	return out, rows.Err()
 }
 
-// HourCost is total cost within a single clock hour, keyed by the hour prefix
-// "2006-01-02T15" (UTC).
+// HourCost is total cost within a single clock hour, keyed by the local-time
+// hour prefix "2006-01-02T15".
 type HourCost struct {
 	Hour    string
 	CostUSD float64
 }
 
-// HourlyCostSince returns total cost grouped by clock hour since the given time,
-// oldest hour first. Used by the TUI's 24-hour trend sparkline.
+// HourlyCostSince returns total cost grouped by local clock hour since the given
+// time, oldest hour first. Used by the TUI's 24-hour trend sparkline. Buckets
+// are stored in UTC and converted to local time for grouping.
 func (s *Store) HourlyCostSince(since time.Time) ([]HourCost, error) {
 	rows, err := s.db.Query(`
-		SELECT substr(bucket_start, 1, 13) AS hour, SUM(cost_usd) AS cost
+		SELECT strftime('%Y-%m-%dT%H', bucket_start, 'localtime') AS hour, SUM(cost_usd) AS cost
 		FROM usage_records
 		WHERE bucket_start >= ?
 		GROUP BY hour
 		ORDER BY hour ASC
-	`, since.Format(time.RFC3339))
+	`, since.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +390,7 @@ func (s *Store) ModelUsageSince(since time.Time) ([]ModelUsage, error) {
 		WHERE u.bucket_start >= ?
 		GROUP BY p.name, m.name
 		ORDER BY SUM(u.cost_usd) DESC
-	`, since.Format(time.RFC3339))
+	`, since.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +473,7 @@ func (s *Store) CostByModelSince(since time.Time) ([]ModelCost, error) {
 		WHERE u.bucket_start >= ?
 		GROUP BY p.name, m.name
 		ORDER BY cost DESC
-	`, since.Format(time.RFC3339))
+	`, since.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}

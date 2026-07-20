@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,84 @@ import (
 
 	"github.com/auswm85/candor/internal/store"
 )
+
+func TestHumanBytes(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"},
+		{1, "1 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1.0 MB"},
+		{1073741824, "1.0 GB"},
+		{2147483648, "2.0 GB"},
+	}
+	for _, c := range cases {
+		t.Run(c.want, func(t *testing.T) {
+			if got := humanBytes(c.n); got != c.want {
+				t.Errorf("humanBytes(%d) = %q, want %q", c.n, got, c.want)
+			}
+		})
+	}
+}
+
+func TestDbSize(t *testing.T) {
+	// Non-existent file → 0.
+	if got := dbSize("/nonexistent/path/to/db"); got != 0 {
+		t.Errorf("non-existent file = %d, want 0", got)
+	}
+
+	// Existing file returns its size.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	if err := os.WriteFile(path, []byte("hello world"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := dbSize(path); got != 11 {
+		t.Errorf("dbSize = %d, want 11", got)
+	}
+}
+
+func TestNewProxyServer(t *testing.T) {
+	h := http.NotFoundHandler()
+	srv := newProxyServer("127.0.0.1:9999", h)
+
+	if srv.Addr != "127.0.0.1:9999" {
+		t.Errorf("Addr = %q, want 127.0.0.1:9999", srv.Addr)
+	}
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v", srv.ReadHeaderTimeout)
+	}
+	if srv.IdleTimeout != 120*time.Second {
+		t.Errorf("IdleTimeout = %v", srv.IdleTimeout)
+	}
+	if srv.MaxHeaderBytes != 1<<20 {
+		t.Errorf("MaxHeaderBytes = %d", srv.MaxHeaderBytes)
+	}
+	if srv.WriteTimeout != 0 {
+		t.Errorf("WriteTimeout = %v, want 0 (no WriteTimeout for streaming)", srv.WriteTimeout)
+	}
+}
+
+func TestShutdownOnDone(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	// Build a server on a random port for shutdown testing.
+	h := http.NotFoundHandler()
+	srv := &http.Server{Addr: "127.0.0.1:0", Handler: h}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel the context, which should trigger shutdown.
+	cancel()
+	shutdownOnDone(ctx, srv) // blocks until shutdown completes or times out
+	// If we reach here without hanging forever, shutdown completed.
+}
 
 func TestRotateLog(t *testing.T) {
 	dir := t.TempDir()

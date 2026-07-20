@@ -582,10 +582,12 @@ func (m model) renderLive(width int) string {
 
 // shortDur formats a duration compactly for reset countdowns: 2h13m, 6m, 45s.
 func shortDur(d time.Duration) string {
-	d = d.Round(time.Minute)
+	// Sub-minute durations round to "<1m" — check before rounding so 30s doesn't
+	// round up to a misleading "1m".
 	if d < time.Minute {
 		return "<1m"
 	}
+	d = d.Round(time.Minute)
 	h := d / time.Hour
 	m := (d % time.Hour) / time.Minute
 	switch {
@@ -752,19 +754,23 @@ func fmtTokens(n int64) string {
 
 // statusDot returns a colored ● — green when on, red when off.
 func statusDot(on bool) string {
-	c := clrRed
+	// Distinguish by glyph as well as color: a filled dot when on, hollow when
+	// off, so the state is still legible in a no-color terminal (and colorblind-safe).
+	c, glyph := clrRed, "○"
 	if on {
-		c = clrGreen
+		c, glyph = clrGreen, "●"
 	}
-	return lipgloss.NewStyle().Foreground(c).Render("●")
+	return lipgloss.NewStyle().Foreground(c).Render(glyph)
 }
 
 // budgetBar renders a color-graded bar (green→yellow→red) for a 0-100+ percentage.
 func budgetBar(pct float64, width int) string {
-	if pct < 0 {
-		pct = 0
-	}
+	// Clamp only the bar fill to [0,100]; the label still shows the true pct
+	// (e.g. a negative value renders an empty bar but keeps its "-10%" label).
 	shown := pct
+	if shown < 0 {
+		shown = 0
+	}
 	if shown > 100 {
 		shown = 100
 	}

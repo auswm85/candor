@@ -158,15 +158,57 @@ func TestStore_DailyCostSince(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d days, want 2: %+v", len(got), got)
+
+	// Days are grouped in the machine's local zone (buckets stored UTC). Derive
+	// the expectation the same way so this stays correct in any test-runner tz.
+	want := map[string]float64{}
+	for _, r := range rows {
+		want[r.BucketStart.In(time.Local).Format("2006-01-02")] += r.CostUSD
 	}
-	// Oldest first, and the two day-2 rows are summed.
-	if got[0].Day != "2026-07-17" || abs(got[0].CostUSD-1.00) > 0.0001 {
-		t.Fatalf("day 0 = %+v", got[0])
+	if len(got) != len(want) {
+		t.Fatalf("got %d days, want %d: %+v", len(got), len(want), got)
 	}
-	if got[1].Day != "2026-07-18" || abs(got[1].CostUSD-2.50) > 0.0001 {
-		t.Fatalf("day 1 = %+v", got[1])
+	for i, d := range got {
+		if abs(d.CostUSD-want[d.Day]) > 0.0001 {
+			t.Errorf("day %q cost = %v, want %v", d.Day, d.CostUSD, want[d.Day])
+		}
+		if i > 0 && got[i-1].Day > d.Day {
+			t.Errorf("days not ascending: %q before %q", got[i-1].Day, d.Day)
+		}
+	}
+}
+
+// TestStore_TotalCostSince_LocalBoundary guards the cross-offset comparison bug:
+// buckets are stored as UTC RFC3339 ("…Z"), so a `since` carrying a non-UTC zone
+// offset must be normalized to UTC before the (string) comparison — otherwise a
+// bucket one minute in the future would be wrongly counted as "since". Uses a
+// fixed zone so it fails on the bug regardless of the runner's own timezone.
+func TestStore_TotalCostSince_LocalBoundary(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	pid, _ := s.ProviderID("anthropic")
+	mid, _ := s.ModelID(pid, "claude-sonnet-4-5")
+	t0 := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	if err := s.AddUsage(UsageRow{ProviderID: pid, ModelID: mid, BucketStart: t0, BucketEnd: t0.Add(time.Minute), CostUSD: 3.00}); err != nil {
+		t.Fatal(err)
+	}
+
+	west := time.FixedZone("west", -7*3600) // same instants, non-UTC offset
+
+	// since == t0 → bucket is included.
+	if got, _ := s.TotalCostSince(t0.In(west)); abs(got-3.00) > 0.0001 {
+		t.Errorf("TotalCostSince(t0) = %v, want 3.00", got)
+	}
+	// since one minute after t0 → bucket is in the past, must be excluded.
+	if got, _ := s.TotalCostSince(t0.Add(time.Minute).In(west)); got != 0 {
+		t.Errorf("TotalCostSince(t0+1m) = %v, want 0 (bucket precedes the bound)", got)
 	}
 }
 
