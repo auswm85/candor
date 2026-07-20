@@ -1,0 +1,63 @@
+# goreleaser configuration — https://goreleaser.com
+# Build cross-platform binaries on tag push (see .github/workflows/release.yml).
+# Try locally with: goreleaser release --snapshot --clean
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: candor
+    main: ./cmd/candor
+    binary: candor
+    env:
+      - CGO_ENABLED=0 # modernc.org/sqlite is pure Go — no CGO needed
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: candor
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: true # review the generated notes before publishing
+
+
+# To publish a Homebrew formula, create a tap repo (e.g. auswm85/homebrew-tap)
+# and uncomment:
+# brews:
+#   - repository:
+#       owner: auswm85
+#       name: homebrew-tap
+#     homepage: https://github.com/auswm85/candor
+#     description: Local-first, live LLM cost tracking via a transparent proxy
+#     license: MIT

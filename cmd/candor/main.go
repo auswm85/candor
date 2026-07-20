@@ -32,13 +32,31 @@ import (
 // budget-threshold notifications.
 const alertInterval = time.Minute
 
+// Build metadata, injected at release time via -ldflags "-X main.version=… -X
+// main.commit=… -X main.date=…". Defaults describe a plain `go build`/`go install`.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "candor",
 	Short: "candor — local-first, live LLM cost tracking via a transparent proxy",
 	Long: `candor records live per-request LLM spend by sitting in front of a coding
 harness as a transparent proxy. Run it with no arguments to open the dashboard;
 see the subcommands for the proxy, a per-run wrapper, and one-off queries.`,
-	RunE: runDashboard,
+	Version: version,
+	RunE:    runDashboard,
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version, commit, and build date",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Printf("candor %s (commit %s, built %s)\n", version, commit, date)
+		return nil
+	},
 }
 
 // openStore loads config and opens+migrates the database — the common prelude
@@ -674,7 +692,7 @@ func main() {
 	exportCmd.Flags().String("format", "csv", "Output format: csv or json")
 	statusCmd.Flags().Bool("json", false, "Output status as JSON")
 
-	rootCmd.AddCommand(proxyCmd, runCmd, tuiCmd, spendCmd, exportCmd, statusCmd, migrateCmd, serviceCmd)
+	rootCmd.AddCommand(proxyCmd, runCmd, tuiCmd, spendCmd, exportCmd, statusCmd, migrateCmd, serviceCmd, versionCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

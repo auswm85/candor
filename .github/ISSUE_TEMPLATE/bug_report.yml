@@ -1,0 +1,54 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For **security** issues, please follow
+        [SECURITY.md](../blob/main/SECURITY.md) instead of filing a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `candor ...`
+        2. Point <harness> at the proxy
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: candor version
+      description: Output of `candor version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / harness
+      description: e.g. Anthropic + Claude Code, OpenRouter + OpenCode
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: From `<db-dir>/daemon.log`, if applicable. Redact any keys.
+      render: shell

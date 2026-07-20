@@ -1,5 +1,9 @@
 # candor
 
+[![CI](https://github.com/auswm85/candor/actions/workflows/ci.yml/badge.svg)](https://github.com/auswm85/candor/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/auswm85/candor)](https://goreportcard.com/report/github.com/auswm85/candor)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Local-first, live LLM cost tracking. A transparent local **proxy** sits in front of your coding harness (Claude Code, OpenCode, …) and records per-request spend as each response streams back — cache-aware, priced in real time, projected against your budget, and surfaced in a full-screen terminal dashboard.
 
 **Local-only.** No cloud, no telemetry, no account, no admin keys. Your inference key is forwarded to the provider untouched and never stored. Everything lives in a single Go binary and a local SQLite database.
@@ -15,6 +19,8 @@ Local-first, live LLM cost tracking. A transparent local **proxy** sits in front
 - **Full-screen terminal UI** — persistent sidebar (at-a-glance spend, this-session burn rate, proxy status) and tabbed panels: **Live** (24h trend sparkline, live activity feed, top models, cache impact, rate-limit windows), 30-day **History** chart, and **Alerts**.
 
 ## Quick Start
+
+Install with Go, or grab a prebuilt binary for your OS from the [Releases](https://github.com/auswm85/candor/releases) page.
 
 ```sh
 go install github.com/auswm85/candor/cmd/candor@latest
@@ -126,6 +132,18 @@ Key settings:
 ```
 
 The proxy forwards each request to the real provider and taps usage (and rate-limit headers) from the response; the recorder prices it and writes to SQLite. A timer projects monthly spend and fires budget alerts. The TUI reads persisted spend from the store and the live feed from the proxy's `/stats` endpoint.
+
+## Security & privacy
+
+candor handles live API traffic, so its trust model is deliberately simple:
+
+- **Your API key is forwarded untouched** — read from the header your harness already sends, passed straight to the provider, never stored or logged.
+- **No cloud, no telemetry, no account.** The only outbound calls are your proxied requests and a periodic fetch of OpenRouter's public pricing catalog (no auth, no personal data).
+- **Loopback-only by default.** The proxy binds `127.0.0.1` and refuses a non-loopback address unless you set `proxy.allow_nonloopback: true`.
+- **Fail-open.** Usage tapping runs only after your bytes are forwarded and is panic-isolated, so candor can never break or block your real request.
+- **The local SQLite database holds usage data, not secrets**, and is created `0600`.
+
+Full details and vulnerability reporting: [SECURITY.md](SECURITY.md).
 
 ## Development
 

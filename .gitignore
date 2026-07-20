@@ -1,15 +1,9 @@
 # Build artifacts (anchored to root to avoid matching cmd/ directories)
 /candor
-/tt
 *.exe
 *.test
 *.out
 dist/
-node_modules/
-web/node_modules/
-web/.svelte-kit/
-web/build/
-internal/web/static/
 vendor/
 # Secrets
 .env
