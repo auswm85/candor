@@ -418,12 +418,12 @@ func TestSanitizeLog(t *testing.T) {
 		"line1\r\nline2":          "line1line2",
 		"trailing\n":              "trailing",
 		"a\rb\nc":                 "abc",
-		"abc\rdef":               "abcdef",
+		"abc\rdef":                "abcdef",
 		"\n\r\n":                  "",
 		"forged\nadmin logged in": "forgedadmin logged in",
-		"café":                   "café",
-		"🎉":                     "🎉",
-		"hello 🌍 world":         "hello 🌍 world",
+		"café":                    "café",
+		"🎉":                       "🎉",
+		"hello 🌍 world":           "hello 🌍 world",
 	}
 	for in, want := range cases {
 		if got := sanitizeLog(in); got != want {
