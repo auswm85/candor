@@ -365,6 +365,191 @@ func TestStore_AlertEvents(t *testing.T) {
 	}
 }
 
+// TestStore_ConfigState covers the alert-dedup state the budget-alert loop
+// depends on: a fired threshold is recorded per month and must survive
+// restarts, so set→get round-trip and upsert-overwrite semantics matter.
+func TestStore_ConfigState(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing key → zero value, no error (ErrNoRows is swallowed by design).
+	if v, err := s.GetConfigState("alert.fired.2026-07.50"); err != nil || v != "" {
+		t.Fatalf("GetConfigState(missing) = %q, %v; want \"\", nil", v, err)
+	}
+
+	// set → get round-trip.
+	if err := s.SetConfigState("alert.fired.2026-07.50", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.GetConfigState("alert.fired.2026-07.50"); err != nil || v != "1" {
+		t.Fatalf("GetConfigState = %q, %v; want \"1\", nil", v, err)
+	}
+
+	// Upsert overwrites.
+	if err := s.SetConfigState("alert.fired.2026-07.50", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.GetConfigState("alert.fired.2026-07.50"); err != nil || v != "2" {
+		t.Fatalf("GetConfigState(after upsert) = %q, %v; want \"2\", nil", v, err)
+	}
+
+	// Other keys are unaffected.
+	if v, err := s.GetConfigState("alert.fired.2026-07.75"); err != nil || v != "" {
+		t.Fatalf("GetConfigState(other key) = %q, %v; want \"\", nil", v, err)
+	}
+
+	// An empty value round-trips without error.
+	if err := s.SetConfigState("empty", ""); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.GetConfigState("empty"); err != nil || v != "" {
+		t.Fatalf("GetConfigState(empty value) = %q, %v; want \"\", nil", v, err)
+	}
+}
+
+// TestStore_ConfigState_NoTable documents the pre-migration contract: both
+// accessors fail loudly when config_state doesn't exist yet.
+func TestStore_ConfigState_NoTable(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.GetConfigState("k"); err == nil {
+		t.Error("GetConfigState before Migrate: expected error, got nil")
+	}
+	if err := s.SetConfigState("k", "v"); err == nil {
+		t.Error("SetConfigState before Migrate: expected error, got nil")
+	}
+}
+
+func TestStore_HourlyCostSince(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	pid, _ := s.ProviderID("anthropic")
+	sonnet, _ := s.ModelID(pid, "claude-sonnet-4-5")
+	haiku, _ := s.ModelID(pid, "claude-haiku-4-5")
+
+	hourA := time.Date(2026, 7, 18, 10, 5, 0, 0, time.UTC)
+	hourAb := time.Date(2026, 7, 18, 10, 40, 0, 0, time.UTC) // same UTC hour, other model
+	hourB := time.Date(2026, 7, 18, 13, 15, 0, 0, time.UTC)
+
+	rows := []UsageRow{
+		{ProviderID: pid, ModelID: sonnet, BucketStart: hourA, BucketEnd: hourA.Add(time.Minute), CostUSD: 1.00},
+		{ProviderID: pid, ModelID: haiku, BucketStart: hourAb, BucketEnd: hourAb.Add(time.Minute), CostUSD: 0.50},
+		{ProviderID: pid, ModelID: sonnet, BucketStart: hourB, BucketEnd: hourB.Add(time.Minute), CostUSD: 2.00},
+	}
+	for _, r := range rows {
+		if err := s.AddUsage(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.HourlyCostSince(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hours group in the machine's local zone (buckets stored UTC). Derive the
+	// expectation the same way so this stays correct in any test-runner tz.
+	want := map[string]float64{}
+	for _, r := range rows {
+		want[r.BucketStart.In(time.Local).Format("2006-01-02T15")] += r.CostUSD
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d hours, want %d: %+v", len(got), len(want), got)
+	}
+	for i, h := range got {
+		if abs(h.CostUSD-want[h.Hour]) > 0.0001 {
+			t.Errorf("hour %q cost = %v, want %v", h.Hour, h.CostUSD, want[h.Hour])
+		}
+		if i > 0 && got[i-1].Hour > h.Hour {
+			t.Errorf("hours not ascending: %q before %q", got[i-1].Hour, h.Hour)
+		}
+	}
+
+	// Rows before the since bound are excluded, and an empty range yields an
+	// empty result (not an error).
+	got, err = s.HourlyCostSince(time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("HourlyCostSince(after all rows) = %+v, want empty", got)
+	}
+}
+
+// TestStore_MigrateCount pins the applied-count return: first call applies the
+// pending files, subsequent calls are no-ops.
+func TestStore_MigrateCount(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	n, err := s.Migrate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Error("first Migrate applied 0 migrations, want > 0")
+	}
+	if n, err := s.Migrate(); err != nil || n != 0 {
+		t.Errorf("second Migrate = %d, %v; want 0, nil", n, err)
+	}
+}
+
+// TestStore_MigrateCorruptFile exercises the "ensure schema_migrations" error
+// path: a file that isn't a SQLite database fails the first statement.
+func TestStore_MigrateCorruptFile(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+	if err := os.WriteFile(path, []byte("this is not a sqlite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.Migrate(); err == nil {
+		t.Fatal("Migrate on a corrupt file: expected error, got nil")
+	}
+}
+
+// TestStore_MigrateBadSchemaMigrationsTable exercises the "check migration"
+// error path: schema_migrations exists but lacks the version column, so the
+// per-file existence query fails.
+func TestStore_MigrateBadSchemaMigrationsTable(t *testing.T) {
+	s, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.db.Exec(`CREATE TABLE schema_migrations (foo TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Migrate(); err == nil {
+		t.Fatal("Migrate with a malformed schema_migrations table: expected error, got nil")
+	}
+}
+
 func abs(f float64) float64 {
 	if f < 0 {
 		return -f
