@@ -40,7 +40,7 @@ jobs:
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
       - run: go vet ./...
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12
       - name: go mod tidy is clean
