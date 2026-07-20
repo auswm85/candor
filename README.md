@@ -1,7 +1,6 @@
 # candor
 
 [![CI](https://github.com/auswm85/candor/actions/workflows/ci.yml/badge.svg)](https://github.com/auswm85/candor/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/auswm85/candor)](https://goreportcard.com/report/github.com/auswm85/candor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Local-first, live LLM cost tracking. A transparent local **proxy** sits in front of your coding harness (Claude Code, OpenCode, …) and records per-request spend as each response streams back — cache-aware, priced in real time, projected against your budget, and surfaced in a full-screen terminal dashboard.
