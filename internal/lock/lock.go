@@ -21,7 +21,9 @@ type Lock struct {
 // parent directory) if needed. Returns ErrLocked if another process holds it.
 func Acquire(path string) (*Lock, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		// 0700 to match the store's DB dir — this dir also holds daemon.log and
+		// the pricing cache, which shouldn't be world-readable on a shared host.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
 	}
