@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -31,6 +32,26 @@ var hopByHop = map[string]bool{
 }
 
 func isHopByHop(k string) bool { return hopByHop[strings.ToLower(k)] }
+
+// sanitizeLog strips CR/LF so a request-derived value (e.g. the provider prefix
+// or an error carrying the user's request path) can't forge extra log lines
+// when interpolated into a log entry (CWE-117, log injection).
+func sanitizeLog(s string) string {
+	return strings.NewReplacer("\n", "", "\r", "").Replace(s)
+}
+
+// sameEndpoint reports whether u targets exactly the configured upstream's
+// scheme+host. It's an egress allowlist: the user controls only the path and
+// query appended to a trusted, config-supplied upstream, and this guarantees
+// that can never redirect the request to a different host (defense in depth
+// against SSRF / request forgery, CWE-918).
+func sameEndpoint(u *url.URL, upstream string) bool {
+	base, err := url.Parse(upstream)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == base.Scheme && u.Host == base.Host
+}
 
 func NewProxy(upstreams map[string]string, recorder *Recorder, maxBodyBytes int64) *Proxy {
 	return &Proxy{
@@ -91,6 +112,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "build upstream request: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	// Egress allowlist: the request-derived path/query must not have altered the
+	// host away from the configured upstream. Always true today (the host comes
+	// from config, not the request), but the explicit check keeps it that way.
+	if !sameEndpoint(outReq.URL, upstream) {
+		http.Error(w, "refusing to forward off the configured upstream", http.StatusBadGateway)
+		return
+	}
 	for k, vs := range req.Header {
 		if strings.EqualFold(k, "Content-Length") || isHopByHop(k) {
 			continue
@@ -104,7 +132,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	resp, err := p.client.Do(outReq)
 	if err != nil {
 		// Log the detail (incl. upstream) locally; keep the client's error generic.
-		log.Printf("proxy: %s upstream request failed: %v", provider, err)
+		log.Printf("proxy: %s upstream request failed: %v", sanitizeLog(provider), sanitizeLog(err.Error()))
 		http.Error(w, "upstream request failed", http.StatusBadGateway)
 		return
 	}
@@ -138,7 +166,7 @@ func (p *Proxy) readRequestBody(w http.ResponseWriter, req *http.Request, provid
 		return nil, false
 	}
 	if p.maxBodyBytes > 0 && int64(len(body)) > p.maxBodyBytes {
-		log.Printf("proxy: %s request body exceeds %d bytes", provider, p.maxBodyBytes)
+		log.Printf("proxy: %s request body exceeds %d bytes", sanitizeLog(provider), p.maxBodyBytes)
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return nil, false
 	}
@@ -181,7 +209,7 @@ func (p *Proxy) forwardResponse(w http.ResponseWriter, resp *http.Response, prov
 	if usage != nil && p.recorder != nil {
 		recovering("record usage", func() {
 			if err := p.recorder.Record(provider, *usage); err != nil {
-				log.Printf("proxy: record %s usage: %v", provider, err)
+				log.Printf("proxy: record %s usage: %v", sanitizeLog(provider), sanitizeLog(err.Error()))
 			}
 		})
 	}

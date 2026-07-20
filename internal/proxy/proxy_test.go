@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -406,5 +407,48 @@ func TestProxy_OpenRouterUsesProviderCostAndInjectsAccounting(t *testing.T) {
 	}
 	if diff := total - 0.0123; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("stored cost = %v, want 0.0123 (provider-supplied)", total)
+	}
+}
+
+func TestSanitizeLog(t *testing.T) {
+	cases := map[string]string{
+		"anthropic":               "anthropic",
+		"anth\nropic":             "anthropic",
+		"line1\r\nline2":          "line1line2",
+		"trailing\n":              "trailing",
+		"a\rb\nc":                 "abc",
+		"forged\nadmin logged in": "forgedadmin logged in",
+	}
+	for in, want := range cases {
+		if got := sanitizeLog(in); got != want {
+			t.Errorf("sanitizeLog(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSameEndpoint(t *testing.T) {
+	const upstream = "https://api.anthropic.com"
+	tests := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{"same host and scheme", "https://api.anthropic.com/v1/messages", true},
+		{"same host with query", "https://api.anthropic.com/v1/messages?beta=1", true},
+		{"different host", "https://evil.example.com/v1/messages", false},
+		{"userinfo host smuggle", "https://api.anthropic.com@evil.example.com/v1", false},
+		{"downgraded scheme", "http://api.anthropic.com/v1/messages", false},
+		{"different port", "https://api.anthropic.com:8443/v1", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.target)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.target, err)
+			}
+			if got := sameEndpoint(u, upstream); got != tc.want {
+				t.Errorf("sameEndpoint(%q, %q) = %v, want %v", tc.target, upstream, got, tc.want)
+			}
+		})
 	}
 }
