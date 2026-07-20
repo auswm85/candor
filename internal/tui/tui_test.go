@@ -786,11 +786,11 @@ func TestRenderLive(t *testing.T) {
 		}
 		got := m.renderLive(80)
 		for _, want := range []string{
-			"1.8k tokens",        // tokens24h suffix
-			"openai",             // feed provider tag
-			"gpt-5-codex-extra…", // long model name truncated at 18 chars
-			"14:05:06",           // feed timestamp
-			"1.5k tok",           // feed token total
+			"1.8k tokens",                 // tokens24h suffix
+			"openai",                      // feed provider tag
+			"gpt-5-codex-extra-long-name", // model name shown in full at this width
+			"14:05:06",                    // feed timestamp
+			"1.5k tok",                    // feed token total
 			"Top models", "Cache impact", "Net cache effect",
 			"Rate limits",
 			"anthropic 5h", "60%", // utilization window → budget bar
@@ -801,6 +801,25 @@ func TestRenderLive(t *testing.T) {
 			if !strings.Contains(got, want) {
 				t.Errorf("renderLive missing %q, got: %s", want, got)
 			}
+		}
+	})
+
+	t.Run("narrow width truncates model name", func(t *testing.T) {
+		m := model{
+			engine: cost.New(cost.DefaultPrices()),
+			feed: []proxy.Event{{
+				At:       time.Date(2026, 7, 19, 14, 5, 6, 0, time.Local),
+				Provider: "openai", Model: "gpt-5-codex-extra-long-name",
+				Input: 1000, Output: 500, CostUSD: 0.0123,
+			}},
+		}
+		// width 60 → nameW clamps to 18, so the 27-char name is truncated.
+		got := m.renderLive(60)
+		if !strings.Contains(got, "gpt-5-codex-extra…") {
+			t.Errorf("renderLive(60) should truncate long model name, got: %s", got)
+		}
+		if strings.Contains(got, "gpt-5-codex-extra-long-name") {
+			t.Errorf("renderLive(60) should not show full long model name, got: %s", got)
 		}
 	})
 }

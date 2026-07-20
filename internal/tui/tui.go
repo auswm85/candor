@@ -489,10 +489,21 @@ func (m model) renderLive(width int) string {
 	if len(m.feed) == 0 {
 		fmt.Fprintf(&b, "  %s\n", dimStyle.Render("waiting for requests…"))
 	} else {
+		// Size the model column to the available width rather than a fixed 18, so
+		// long slugs (e.g. moonshotai/kimi-k2-thinking) aren't needlessly cut when
+		// the terminal is wide. Reserve ~50 cols for the time/provider/token/cost
+		// columns and surrounding spaces; clamp so it degrades gracefully.
+		nameW := width - 50
+		if nameW < 18 {
+			nameW = 18
+		}
+		if nameW > 48 {
+			nameW = 48
+		}
 		for _, e := range m.feed {
 			name := e.Model
-			if len(name) > 18 {
-				name = name[:17] + "…"
+			if len(name) > nameW {
+				name = name[:nameW-1] + "…"
 			}
 			// Pad provider tag with plain spaces so ANSI color codes don't skew
 			// column alignment.
@@ -501,8 +512,8 @@ func (m model) renderLive(width int) string {
 				prov += strings.Repeat(" ", pad)
 			}
 			tokens := e.Input + e.Cached + e.CacheWrite + e.Output
-			fmt.Fprintf(&b, "  %s  %s  %-18s %s  %s\n",
-				dimStyle.Render(e.At.Format("15:04:05")), prov, name,
+			fmt.Fprintf(&b, "  %s  %s  %-*s %s  %s\n",
+				dimStyle.Render(e.At.Format("15:04:05")), prov, nameW, name,
 				dimStyle.Render(fmt.Sprintf("%7s tok", fmtTokens(tokens))), moneyFine(e.CostUSD))
 		}
 	}
