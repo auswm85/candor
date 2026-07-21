@@ -19,9 +19,14 @@ Local-first, live LLM cost tracking. A transparent local **proxy** sits in front
 
 ## Quick Start
 
-Install with Go, or grab a prebuilt binary for your OS from the [Releases](https://github.com/auswm85/candor/releases) page.
+Install with Homebrew, Go, or grab a prebuilt binary for your OS from the [Releases](https://github.com/auswm85/candor/releases) page.
 
 ```sh
+# Homebrew (macOS & Linux)
+brew tap auswm85/homebrew-tap
+brew install candor
+
+# or via Go
 go install github.com/auswm85/candor/cmd/candor@latest
 
 # Open the dashboard (hosts the proxy too)
