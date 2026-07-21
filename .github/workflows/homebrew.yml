@@ -1,0 +1,81 @@
+name: Homebrew
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  homebrew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: auswm85/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Generate and push formula
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: tap
+        run: |
+          set -euo pipefail
+
+          V="${TAG#v}"
+
+          gh release download "$TAG" \
+            --repo auswm85/candor \
+            --pattern checksums.txt \
+            --dir /tmp
+
+          sha_macos_arm=$(awk '$2 ~ /macOS_Apple-Silicon/ {print $1}' /tmp/checksums.txt)
+          sha_macos_amd=$(awk '$2 ~ /macOS_x86-64/ {print $1}' /tmp/checksums.txt)
+          sha_linux_arm=$(awk '$2 ~ /Linux_ARM64/ {print $1}' /tmp/checksums.txt)
+          sha_linux_amd=$(awk '$2 ~ /Linux_x86-64/ {print $1}' /tmp/checksums.txt)
+
+          mkdir -p Formula
+          cat > Formula/candor.rb << EOF
+          class Candor < Formula
+            desc "Local-first, live LLM cost tracking via a transparent proxy"
+            homepage "https://github.com/auswm85/candor"
+            version "${V}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/auswm85/candor/releases/download/${TAG}/candor_${V}_macOS_Apple-Silicon.tar.gz"
+                sha256 "${sha_macos_arm}"
+              end
+              if Hardware::CPU.intel?
+                url "https://github.com/auswm85/candor/releases/download/${TAG}/candor_${V}_macOS_x86-64.tar.gz"
+                sha256 "${sha_macos_amd}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/auswm85/candor/releases/download/${TAG}/candor_${V}_Linux_ARM64.tar.gz"
+                sha256 "${sha_linux_arm}"
+              end
+              if Hardware::CPU.intel?
+                url "https://github.com/auswm85/candor/releases/download/${TAG}/candor_${V}_Linux_x86-64.tar.gz"
+                sha256 "${sha_linux_amd}"
+              end
+            end
+
+            def install
+              bin.install "candor"
+            end
+
+            test do
+              system "#{bin}/candor", "version"
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/candor.rb
+          git commit -m "candor ${TAG}" || echo "No changes to commit"
+          git push

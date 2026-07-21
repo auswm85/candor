@@ -33,8 +33,8 @@ archives:
       - goos: windows
         formats: [zip]
     name_template: >-
-      {{ .ProjectName }}_
-      {{ .Version }}_
+      {{- .ProjectName }}_
+      {{- .Version }}_
       {{- if eq .Os "darwin" }}macOS{{ else }}{{ .Os | title }}{{ end }}_
       {{- if eq .Arch "amd64" }}x86-64
       {{- else if eq .Arch "arm64" }}{{ if eq .Os "darwin" }}Apple-Silicon{{ else }}ARM64{{ end }}
@@ -55,14 +55,3 @@ changelog:
 
 release:
   draft: true # review the generated notes before publishing
-
-
-# To publish a Homebrew formula, create a tap repo (e.g. auswm85/homebrew-tap)
-# and uncomment:
-# brews:
-#   - repository:
-#       owner: auswm85
-#       name: homebrew-tap
-#     homepage: https://github.com/auswm85/candor
-#     description: Local-first, live LLM cost tracking via a transparent proxy
-#     license: MIT
