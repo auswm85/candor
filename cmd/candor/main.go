@@ -697,8 +697,12 @@ func main() {
 	exportCmd.Flags().String("until", "", "End date, inclusive (YYYY-MM-DD); default: now")
 	exportCmd.Flags().String("format", "csv", "Output format: csv or json")
 	statusCmd.Flags().Bool("json", false, "Output status as JSON")
+	estimateCmd.Flags().String("provider", "openai", "Provider name (openai, anthropic, etc.)")
+	estimateCmd.Flags().String("model", "", "Model name (required, e.g. gpt-4o, claude-sonnet-4-5)")
+	estimateCmd.Flags().String("prompt", "", "Prompt text to estimate")
+	estimateCmd.Flags().String("prompt-file", "", "Read prompt from file")
 
-	rootCmd.AddCommand(proxyCmd, runCmd, tuiCmd, spendCmd, exportCmd, statusCmd, migrateCmd, serviceCmd, versionCmd)
+	rootCmd.AddCommand(proxyCmd, runCmd, tuiCmd, spendCmd, exportCmd, statusCmd, estimateCmd, migrateCmd, serviceCmd, versionCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
