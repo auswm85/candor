@@ -9,8 +9,28 @@ on:
     - cron: "27 4 * * 1" # weekly, Monday 04:27 UTC
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'db/migrations/**'
+              - '.golangci.yml'
+              - '.github/workflows/ci.yml'
+
   analyze:
     name: Analyze Go
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       actions: read
