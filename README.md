@@ -39,9 +39,19 @@ candor run -- claude
 candor spend today             # today's spend
 candor spend month --by-model  # this month, broken down by model
 candor status                  # db size, month/today spend, proxy state
+candor estimate --model gpt-4o --prompt "explain Go interfaces"   # cost estimate before sending
 candor export --since 2026-01-01 --format csv   # export raw usage (csv|json) to stdout
 candor version                 # version, commit, and build date
 ```
+
+Estimate the cost of a prompt before sending it — useful for comparing models or checking a prompt's price without a live request:
+
+```sh
+candor estimate --model gpt-4o --prompt "explain Go interfaces"
+candor estimate --model claude-sonnet-4-5 --provider anthropic --prompt-file my_prompt.txt
+```
+
+The token count is approximate (`chars ÷ 4`, rough for English); the price comes from the dynamic OpenRouter catalog, falling back to bundled defaults offline.
 
 Budget alerts are configured in `config.yaml` (`defaults.monthly_budget_usd` and `defaults.alert_thresholds`); candor fires an OS notification the first time projected spend crosses each threshold in a month.
 

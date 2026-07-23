@@ -37,9 +37,9 @@ func New(prices Prices) *Engine {
 	return &Engine{prices: prices}
 }
 
-// priceFor looks up a model's price, falling back to the canonical (normalized)
+// PriceFor looks up a model's price, falling back to the canonical (normalized)
 // ID so dated/prefixed proxied model names still resolve.
-func (e *Engine) priceFor(provider, model string) (ModelPrice, bool) {
+func (e *Engine) PriceFor(provider, model string) (ModelPrice, bool) {
 	modelPrices, ok := e.prices[provider]
 	if !ok {
 		return ModelPrice{}, false
@@ -54,7 +54,7 @@ func (e *Engine) priceFor(provider, model string) (ModelPrice, bool) {
 // CacheImpact returns the dollars saved by reading cached tokens (vs paying full
 // input price) and the extra dollars paid to create the cache (vs normal input).
 func (e *Engine) CacheImpact(provider, model string, cachedTokens, cacheWriteTokens int64) (saved, extra float64) {
-	p, ok := e.priceFor(provider, model)
+	p, ok := e.PriceFor(provider, model)
 	if !ok {
 		return 0, 0
 	}
@@ -70,7 +70,7 @@ func (e *Engine) CacheImpact(provider, model string, cachedTokens, cacheWriteTok
 }
 
 func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cacheWrite, outputTokens int64) float64 {
-	p, ok := e.priceFor(provider, model)
+	p, ok := e.PriceFor(provider, model)
 	if !ok {
 		return 0
 	}
