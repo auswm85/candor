@@ -118,3 +118,21 @@ func abs(f float64) float64 {
 	}
 	return f
 }
+
+// Issue #6: the offline fallback underpriced OpenAI cached input by 4x
+// (0.3125 vs the published 1.25 per 1M for gpt-4o). Published rule for the
+// gpt-4o family: cached input is billed at 50% of the input rate. This pins
+// the table so a future refresh cannot silently reintroduce the gap.
+func TestOfflineFallbackOpenAICachedInputMatchesPublished(t *testing.T) {
+	p := DefaultPrices()
+	r, ok := p["openai"]["gpt-4o"]
+	if !ok {
+		t.Fatal("gpt-4o missing from offline fallback table")
+	}
+	if r.CachedInputPer1M != 1.25 {
+		t.Errorf("gpt-4o CachedInputPer1M = %v, want 1.25 (published $1.25/1M)", r.CachedInputPer1M)
+	}
+	if got := r.InputPer1M * 0.5; r.CachedInputPer1M != got {
+		t.Errorf("gpt-4o CachedInputPer1M = %v, want 50%% of input = %v", r.CachedInputPer1M, got)
+	}
+}
