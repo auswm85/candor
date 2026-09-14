@@ -25,7 +25,7 @@ func newProxy(t *testing.T, provider, upstream string) (*Proxy, *store.Store) {
 		t.Fatal(err)
 	}
 	prices := cost.Prices{
-		"openai":    {"gpt-4o": {InputPer1M: 2.50, CachedInputPer1M: 0.3125, OutputPer1M: 10.00}},
+		"openai":    {"gpt-4o": {InputPer1M: 2.50, CachedInputPer1M: 1.25, OutputPer1M: 10.00}},
 		"anthropic": {"claude-sonnet-4-5": {InputPer1M: 3.00, CachedInputPer1M: 0.30, CacheWritePer1M: 3.75, OutputPer1M: 15.00}},
 	}
 	rec := NewRecorder(st, cost.New(prices))
@@ -112,13 +112,13 @@ func TestProxy_NonStreamingCapturesUsageAndForwards(t *testing.T) {
 	}
 
 	// input = prompt_tokens - cached = 800; cached = 200; output = 500.
-	// cost = 800/1e6*2.50 + 200/1e6*0.3125 + 500/1e6*10 = 0.0020 + 0.0000625 + 0.0050 = 0.0070625
+	// cost = 800/1e6*2.50 + 200/1e6*1.25 + 500/1e6*10 = 0.0020 + 0.00025 + 0.0050 = 0.00725
 	total, err := st.TotalCostSince(time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := total - 0.0070625; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("stored cost = %v, want 0.0070625", total)
+	if diff := total - 0.00725; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("stored cost = %v, want 0.00725", total)
 	}
 	rows, _ := st.CostByModelSince(time.Now().Add(-time.Hour))
 	if len(rows) != 1 || rows[0].Provider != "openai" || rows[0].Model != "gpt-4o" {
