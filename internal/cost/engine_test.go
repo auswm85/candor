@@ -7,8 +7,8 @@ func TestEngine_Compute(t *testing.T) {
 		"openai": {
 			"gpt-4o": {
 				InputPer1M:       2.50,
-				CachedInputPer1M: 0.3125,
-				CacheWritePer1M:  3.125,
+				CachedInputPer1M: 1.25,
+				CacheWritePer1M:  0,
 				OutputPer1M:      10.00,
 			},
 		},
@@ -28,22 +28,22 @@ func TestEngine_Compute(t *testing.T) {
 			want: 2.50,
 		},
 		{
-			name:     "cached input at 12.5%",
+			name:     "cached input at 50% (OpenAI discount)",
 			provider: "openai", model: "gpt-4o",
 			input: 0, cached: 1_000_000, write: 0, output: 0,
-			want: 0.3125,
+			want: 1.25,
 		},
 		{
-			name:     "cache write at 125%",
+			name:     "cache write is not billed for OpenAI",
 			provider: "openai", model: "gpt-4o",
 			input: 0, cached: 0, write: 1_000_000, output: 0,
-			want: 3.125,
+			want: 0,
 		},
 		{
 			name:     "mixed with output",
 			provider: "openai", model: "gpt-4o",
 			input: 500_000, cached: 200_000, write: 50_000, output: 100_000,
-			want: 1.25 + 0.0625 + 0.15625 + 1.00, // 2.46875
+			want: 1.25 + 0.25 + 0 + 1.00, // 2.50
 		},
 		{
 			name:     "unknown model returns 0",
@@ -117,4 +117,39 @@ func abs(f float64) float64 {
 		return -f
 	}
 	return f
+}
+
+// Issue #6: the offline fallback underpriced OpenAI cached input by 4x
+// (0.3125 vs the published 1.25 per 1M for gpt-4o). Published rule for the
+// gpt-4o family: cached input is billed at 50% of the input rate. This pins
+// the table so a future refresh cannot silently reintroduce the gap.
+func TestOfflineFallbackOpenAICachedInputMatchesPublished(t *testing.T) {
+	p := DefaultPrices()
+	r, ok := p["openai"]["gpt-4o"]
+	if !ok {
+		t.Fatal("gpt-4o missing from offline fallback table")
+	}
+	if r.CachedInputPer1M != 1.25 {
+		t.Errorf("gpt-4o CachedInputPer1M = %v, want 1.25 (published $1.25/1M)", r.CachedInputPer1M)
+	}
+	if got := r.InputPer1M * 0.5; r.CachedInputPer1M != got {
+		t.Errorf("gpt-4o CachedInputPer1M = %v, want 50%% of input = %v", r.CachedInputPer1M, got)
+	}
+	if r.CacheWritePer1M != 0 {
+		t.Errorf("gpt-4o CacheWritePer1M = %v, want 0 (OpenAI does not bill cache writes; openAIToUsage never sets CacheWriteTokens)", r.CacheWritePer1M)
+	}
+
+	m, ok := p["openai"]["gpt-4o-mini"]
+	if !ok {
+		t.Fatal("gpt-4o-mini missing from offline fallback table")
+	}
+	if m.CachedInputPer1M != 0.075 {
+		t.Errorf("gpt-4o-mini CachedInputPer1M = %v, want 0.075 (published $0.075/1M)", m.CachedInputPer1M)
+	}
+	if got := m.InputPer1M * 0.5; m.CachedInputPer1M != got {
+		t.Errorf("gpt-4o-mini CachedInputPer1M = %v, want 50%% of input = %v", m.CachedInputPer1M, got)
+	}
+	if m.CacheWritePer1M != 0 {
+		t.Errorf("gpt-4o-mini CacheWritePer1M = %v, want 0", m.CacheWritePer1M)
+	}
 }

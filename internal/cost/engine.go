@@ -83,10 +83,11 @@ func (e *Engine) Compute(provider, model string, inputTokens, cachedInput, cache
 
 // DefaultPrices returns built-in pricing (USD per 1M tokens) used as the offline
 // fallback when the dynamic OpenRouter catalog (internal/pricing) is unavailable.
-// Cache-read is ~0.1x input and 5-minute cache-write is ~1.25x input. Values
-// reflect published list prices as of mid-2026 and can drift; the live catalog is
-// the primary source. Dated snapshot IDs (e.g. claude-sonnet-4-5-20250929)
-// resolve to these base entries via model normalization.
+// Anthropic: cache-read is ~0.1x input and 5-minute cache-write is ~1.25x input.
+// OpenAI: cached input is a 50% discount (0.5x input) and cache writes are not
+// billed (no rate). Values reflect published list prices as of mid-2026 and can
+// drift; the live catalog is the primary source. Dated snapshot IDs (e.g.
+// claude-sonnet-4-5-20250929) resolve to these base entries via model normalization.
 func DefaultPrices() Prices {
 	return Prices{
 		"anthropic": {
@@ -106,8 +107,8 @@ func DefaultPrices() Prices {
 			"claude-fable-5": {InputPer1M: 10.00, CachedInputPer1M: 1.00, CacheWritePer1M: 12.50, OutputPer1M: 50.00},
 		},
 		"openai": {
-			"gpt-4o":      {InputPer1M: 2.50, CachedInputPer1M: 0.3125, CacheWritePer1M: 3.125, OutputPer1M: 10.00},
-			"gpt-4o-mini": {InputPer1M: 0.15, CachedInputPer1M: 0.01875, CacheWritePer1M: 0.1875, OutputPer1M: 0.60},
+			"gpt-4o":      {InputPer1M: 2.50, CachedInputPer1M: 1.25, CacheWritePer1M: 0, OutputPer1M: 10.00},
+			"gpt-4o-mini": {InputPer1M: 0.15, CachedInputPer1M: 0.075, CacheWritePer1M: 0, OutputPer1M: 0.60},
 		},
 	}
 }
